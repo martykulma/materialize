@@ -29,7 +29,7 @@ use crate::location::{Blob, Consensus, Determinate, ExternalError};
 use crate::mem::{MemBlob, MemBlobConfig, MemConsensus};
 use crate::metrics::S3BlobMetrics;
 use crate::postgres::{PostgresConsensus, PostgresConsensusConfig};
-use crate::s3::{S3Blob, S3BlobConfig};
+use crate::s3::{S3Blob, S3BlobConfig, S3Consensus, S3ConsensusConfig};
 
 /// Adds the full set of all mz_persist `Config`s.
 pub fn all_dyn_configs(configs: ConfigSet) -> ConfigSet {
@@ -234,6 +234,8 @@ pub enum ConsensusConfig {
     #[cfg(feature = "turmoil")]
     /// Config for [crate::turmoil::TurmoilConsensus].
     Turmoil(crate::turmoil::ConsensusConfig),
+    /// Config for [S3Consensus]
+    S3(S3ConsensusConfig),
 }
 
 impl ConsensusConfig {
@@ -252,11 +254,14 @@ impl ConsensusConfig {
             ConsensusConfig::Turmoil(config) => {
                 Ok(Arc::new(crate::turmoil::TurmoilConsensus::open(config)))
             }
+            ConsensusConfig::S3(s3_consensus_config) => {
+                Ok(Arc::new(S3Consensus::new(s3_consensus_config).await?))
+            }
         }
     }
 
     /// Parses a [Consensus] config from a uri string.
-    pub fn try_from(
+    pub async fn try_from(
         url: &SensitiveUrl,
         knobs: Box<dyn PostgresClientKnobs>,
         metrics: PostgresClientMetrics,
@@ -281,6 +286,7 @@ impl ConsensusConfig {
                 let cfg = crate::turmoil::ConsensusConfig::new(url);
                 Ok(ConsensusConfig::Turmoil(cfg))
             }
+            "s3" => Ok(ConsensusConfig::S3(S3ConsensusConfig::try_from(url).await?)),
             p => Err(anyhow!(
                 "unknown persist consensus scheme {}: {}",
                 p,

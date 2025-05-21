@@ -208,7 +208,7 @@ impl PersistClientCache {
                     Box::new(self.cfg.clone()),
                     self.metrics.postgres_consensus.clone(),
                     Arc::clone(&self.cfg().configs),
-                )?;
+                ).await?;
                 let consensus =
                     retry_external(&self.metrics.retries.external.consensus_open, || {
                         consensus.clone().open()

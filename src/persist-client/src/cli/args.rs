@@ -131,7 +131,7 @@ pub(super) async fn make_consensus(
         Box::new(cfg.clone()),
         metrics.postgres_consensus.clone(),
         Arc::clone(&cfg.configs),
-    )?;
+    ).await?;
     let consensus = consensus.clone().open().await?;
     let consensus = if commit {
         consensus

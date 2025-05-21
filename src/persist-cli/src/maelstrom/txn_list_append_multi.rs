@@ -428,6 +428,7 @@ impl Service for TransactorService {
                     metrics.postgres_consensus.clone(),
                     Arc::clone(&config.configs),
                 )
+                .await
                 .expect("consensus_uri should be valid");
                 loop {
                     match cfg.clone().open().await {
