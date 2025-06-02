@@ -29,7 +29,8 @@ use crate::location::{Blob, Consensus, Determinate, ExternalError};
 use crate::mem::{MemBlob, MemBlobConfig, MemConsensus};
 use crate::metrics::S3BlobMetrics;
 use crate::postgres::{PostgresConsensus, PostgresConsensusConfig};
-use crate::s3::{S3Blob, S3BlobConfig, S3Consensus, S3ConsensusConfig};
+use crate::s3::consensus::{S3Consensus, S3ConsensusConfig};
+use crate::s3::{S3Blob, S3BlobConfig};
 
 /// Adds the full set of all mz_persist `Config`s.
 pub fn all_dyn_configs(configs: ConfigSet) -> ConfigSet {

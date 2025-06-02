@@ -22,9 +22,9 @@ pub mod txn_list_append_single;
 
 /// An adaptor to Jepsen Maelstrom's txn-list-append workload
 ///
-/// Example usage:
+/// Example usage (assuming you downloaded maelstrom tar to ~/Downloads and extract it there):
 ///
-///     cargo build --example persistcli && java -jar /path/to/maelstrom.jar test -w txn-list-append --bin ./target/debug/examples/persistcli maelstrom
+///     cargo build --bin persistcli && java -Djava.awt.headless=true -jar ~/Downloads/maelstrom/lib/maelstrom.jar test -w txn-list-append --bin ./target/debug/persistcli -- maelstrom --consensus-uri='mem://' --blob-uri='mem://'
 ///
 /// The [Maelstrom docs] are a great place to start for an understanding of
 /// the specifics of what's going on here.

@@ -9,18 +9,14 @@
 
 //! An S3 implementation of [Blob] storage.
 
-use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
-use std::num::ParseIntError;
 use std::ops::Range;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicU64};
 use std::time::{Duration, Instant};
 use std::{cmp, i32, u64};
 
 use anyhow::{Context, anyhow};
-use async_stream::try_stream;
 use async_trait::async_trait;
 use aws_config::sts::AssumeRoleProvider;
 use aws_config::timeout::TimeoutConfig;
@@ -28,9 +24,8 @@ use aws_credential_types::Credentials;
 use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::config::{AsyncSleep, Sleep};
 use aws_sdk_s3::error::{ProvideErrorMetadata, SdkError};
-use aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Output;
-use aws_sdk_s3::primitives::{ByteStream, SdkBody};
-use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier};
+use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_types::region::Region;
 use bytes::Bytes;
 use futures_util::stream::FuturesOrdered;
@@ -41,19 +36,16 @@ use mz_ore::cast::CastFrom;
 use mz_ore::lgbytes::MetricsRegion;
 use mz_ore::metrics::MetricsRegistry;
 use mz_ore::task::RuntimeExt;
-use mz_ore::url::SensitiveUrl;
 use tokio::runtime::Handle as AsyncHandle;
 use tracing::{Instrument, debug, debug_span, trace, trace_span};
 use uuid::Uuid;
 
 use crate::cfg::BlobKnobs;
 use crate::error::Error;
-use crate::location::{
-    Blob, BlobMetadata, CaSResult, Consensus, Determinate, ExternalError, ResultStream, SeqNo,
-    VersionedData,
-};
+use crate::location::{Blob, BlobMetadata, Determinate, ExternalError};
 use crate::metrics::S3BlobMetrics;
 
+pub(crate) mod consensus;
 /// Configuration for opening an [S3Blob].
 #[derive(Clone, Debug)]
 pub struct S3BlobConfig {
@@ -1147,449 +1139,10 @@ impl MinElapsed {
 fn openssl_sys_hack() {
     openssl_sys::init();
 }
-/// Configuration to connect to a S3 backed implementation of [Consensus].
-#[derive(Clone, Debug)]
-pub struct S3ConsensusConfig {
-    bucket: String,
-    prefix: String,
-    client: S3Client,
-}
-
-impl S3ConsensusConfig {
-    #[allow(dead_code)]
-    const EXTERNAL_TESTS_URL: &'static str = "MZ_PERSIST_EXTERNAL_STORAGE_TEST_S3CONSENSUS_URL";
-
-    #[allow(dead_code)]
-    async fn new_for_test() -> Result<Self, anyhow::Error> {
-        let url = std::env::var(Self::EXTERNAL_TESTS_URL)?;
-        let url = SensitiveUrl::from_str(&url)
-            .map_err(|e| e.to_string())
-            .map_err(anyhow::Error::msg)?;
-        Self::try_from(&url).await
-    }
-
-    /// Parse an S3 URL into an S3 consensus configuration
-    pub async fn try_from(url: &SensitiveUrl) -> Result<Self, anyhow::Error> {
-        assert_eq!("s3", url.0.scheme());
-        let bucket = url
-            .host()
-            .ok_or_else(|| anyhow!("missing bucket: {}", &url.as_str()))?
-            .to_string();
-        let prefix = url
-            .path()
-            .strip_prefix('/')
-            .unwrap_or_else(|| url.path())
-            .to_string();
-        let mut query_params = url.query_pairs().collect::<BTreeMap<_, _>>();
-        let role_arn = query_params.remove("role_arn").map(|x| x.into_owned());
-        let endpoint = query_params.remove("endpoint").map(|x| x.into_owned());
-        let region = query_params.remove("region").map(|x| x.into_owned());
-
-        let credentials = match url.password() {
-            None => None,
-            Some(password) => Some((
-                String::from_utf8_lossy(&urlencoding::decode_binary(url.username().as_bytes()))
-                    .into_owned(),
-                String::from_utf8_lossy(&urlencoding::decode_binary(password.as_bytes()))
-                    .into_owned(),
-            )),
-        };
-
-        let mut loader = mz_aws_util::defaults();
-        if let Some(region) = region {
-            loader = loader.region(Region::new(region));
-        };
-
-        if let Some(role_arn) = role_arn {
-            let assume_role_sdk_config = mz_aws_util::defaults().load().await;
-            let role_provider = AssumeRoleProvider::builder(role_arn)
-                .configure(&assume_role_sdk_config)
-                .session_name("consensus")
-                .build()
-                .await;
-            loader = loader.credentials_provider(role_provider);
-        }
-
-        if let Some((access_key_id, secret_access_key)) = credentials {
-            loader = loader.credentials_provider(Credentials::from_keys(
-                access_key_id,
-                secret_access_key,
-                None,
-            ));
-        }
-
-        if let Some(endpoint) = endpoint {
-            loader = loader.endpoint_url(endpoint)
-        }
-
-        let client = mz_aws_util::s3::new_client(&loader.load().await);
-        Ok(S3ConsensusConfig {
-            bucket,
-            prefix,
-            client,
-        })
-    }
-}
-
-/// boo
-#[derive(Debug)]
-pub struct S3Consensus {
-    client: S3Client,
-    bucket: String,
-    prefix: String,
-}
-/// boo
-impl S3Consensus {
-    /// Build a new [S3Consensus]
-    /// It's only async for consensus_impl_test
-    pub async fn new(config: S3ConsensusConfig) -> Result<Self, ExternalError> {
-        Ok(S3Consensus {
-            client: config.client,
-            bucket: config.bucket,
-            prefix: config.prefix,
-        })
-    }
-
-    fn build_s3_key(&self, key: &str, seqno: &S3SeqNo) -> String {
-        // we want most recent version to be lexicographically first
-        format!("{}/{}/{}", self.prefix, key, seqno)
-    }
-
-    fn parse_s3_key(&self, s3_key: &str) -> (String, S3SeqNo) {
-        // we know that the version at the end will always be 20 chars long
-        let key = &s3_key[(self.prefix.len() + 1)..(s3_key.len() - 21)];
-        let ver = &s3_key[s3_key.len() - 20..];
-        (
-            key.to_string(),
-            ver.parse::<S3SeqNo>().expect("valid version"),
-        )
-    }
-
-    async fn s3_list<F>(&self, prefix: String, mut process_page: F) -> Result<(), anyhow::Error>
-    where
-        F: FnMut(ListObjectsV2Output) -> Result<bool, anyhow::Error>,
-    {
-        let mut continuation_token = None;
-        loop {
-            let mut req = self
-                .client
-                .list_objects_v2()
-                .bucket(&self.bucket)
-                .prefix(&prefix)
-                .delimiter(S3_CONSENSUS_DELIMITER);
-            if let Some(ref token) = continuation_token {
-                req = req.continuation_token(token);
-            }
-            let res = req.send().await.map_err(anyhow::Error::msg)?;
-
-            continuation_token = res.continuation_token().map(|s| s.to_string());
-            if !process_page(res)? || continuation_token.is_none() {
-                break;
-            }
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug)]
-struct S3SeqNo(u64);
-
-impl std::fmt::Display for S3SeqNo {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:020}", self.0)
-    }
-}
-
-impl FromStr for S3SeqNo {
-    type Err = ParseIntError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(S3SeqNo(s.parse::<u64>()?))
-    }
-}
-
-impl From<&SeqNo> for S3SeqNo {
-    fn from(value: &SeqNo) -> Self {
-        // No special handling for overflow as both S3SeqNo and SeqNo are u64 internally
-        S3SeqNo(u64::MAX - value.0)
-    }
-}
-
-impl Into<SeqNo> for &S3SeqNo {
-    fn into(self) -> SeqNo {
-        // No special handling for overflow as both S3SeqNo and SeqNo are u64 internally
-        SeqNo(u64::MAX - self.0)
-    }
-}
-
-const S3_CONSENSUS_DELIMITER: &str = "/";
-
-// We can't use Etag (String, generally MD5, but not always) or VersionId (random UUID)
-// s3://<bucket>/<prefix>/<key>/<version>
-// where version is SeqNo and we idenify collision using PutObject If-None-Match: "*"
-// this relies on lexicographic ordering, so directory buckets are a no-no
-
-/// Implementation of [Consensus] using S3.
-/// This implementionation takes advantage of S3's conditional PutObject request to ensure
-/// that only a single writer successfully writes an object.
-///
-/// Consensus relies on storing some [VersionedData] for a given key with a monotonic integer
-/// sequence number [SeqNo].  This implementation accepts a bucket and perfix (s3_prefix) as
-/// the storage location of the consensus data. Access to the most recent keys, and the ability
-/// to find the largest [SeqNo], are latency sensitive.  To address that need, the S3 key is
-/// written in such a way that sequence numbers are descending.
-///
-/// The resulting S3 key representation:
-/// s3://<bucket>/<s3_prefix>/<key>/<u64::MAX - seqno>
-/// where the sequence number is a 20 character string padded with 0.
-///
-/// Note: Classic S3 bucket listing returns keys in lexicographic order, but directory buckets
-/// do not.  This implementation relies on lexicographically ordered listing, so directory buckets
-/// cannot be supported with modification.
-#[async_trait]
-impl Consensus for S3Consensus {
-    fn list_keys(&self) -> ResultStream<String> {
-        Box::pin(try_stream! {
-            let mut continuation_token = None;
-            let prefix = format!("{}/", self.prefix);
-            loop {
-                let mut req = self
-                    .client
-                    .list_objects_v2()
-                    .bucket(&self.bucket)
-                    .prefix(&prefix)
-                    .delimiter(S3_CONSENSUS_DELIMITER);
-                if let Some(token) = continuation_token {
-                    req = req.continuation_token(token);
-                }
-                let res = req.send().await.map_err(anyhow::Error::msg)?;
-                for entry in res.common_prefixes() {
-                    let Some(key) = entry.prefix() else { continue };
-                    let key = &key[prefix.len()..key.len()-1];
-                    yield key.to_string();
-                }
-                continuation_token = res.continuation_token().map(|s| s.to_string());
-                if continuation_token.is_none() {
-                    break;
-                }
-            }
-        })
-    }
-
-    async fn head(&self, key: &str) -> Result<Option<VersionedData>, ExternalError> {
-        let res = self
-            .client
-            .list_objects_v2()
-            .bucket(&self.bucket)
-            .prefix(format!("{}/{}/", self.prefix, key))
-            .delimiter(S3_CONSENSUS_DELIMITER)
-            .max_keys(1)
-            .send()
-            .await
-            .map_err(anyhow::Error::msg)?;
-
-        let Some((_, s3_seqno)) = res
-            .contents()
-            .iter()
-            .next()
-            .map(|k| k.key().map(|s3_key| self.parse_s3_key(s3_key)))
-            .flatten()
-        else {
-            return Ok(None);
-        };
-
-        let res = self
-            .client
-            .get_object()
-            .bucket(&self.bucket)
-            .key(self.build_s3_key(&key, &s3_seqno))
-            .send()
-            .await
-            .map_err(anyhow::Error::msg)?;
-
-        let data = res.body.collect().await.map_err(anyhow::Error::msg)?;
-        let versioned_data = VersionedData {
-            seqno: (&s3_seqno).into(),
-            data: data.into_bytes(),
-        };
-        Ok(Some(versioned_data))
-    }
-
-    async fn compare_and_set(
-        &self,
-        key: &str,
-        expected: Option<SeqNo>,
-        new: VersionedData,
-    ) -> Result<CaSResult, ExternalError> {
-        if new.seqno.0 > i64::MAX as u64 {
-            return Err(anyhow!(
-                "new seqno must be in the range [0, i64::MAX]. Got new: {:?}",
-                new.seqno
-            )
-            .into());
-        }
-        if let Some(seqno) = expected {
-            if new.seqno <= seqno {
-                // Don't change this error string, consensus_impl_test matches on this error.
-                return Err(anyhow!("new seqno must be strictly greater than expected. Got new: {:?} expected: {:?}",
-                                 new.seqno, seqno).into());
-            }
-            let s3_seqno = S3SeqNo::from(&seqno);
-            let res = self
-                .client
-                .head_object()
-                .bucket(&self.bucket)
-                .key(self.build_s3_key(key, &s3_seqno))
-                .send()
-                .await;
-            if let Err(e) = res {
-                if e.as_service_error()
-                    .is_some_and(|svc_err| svc_err.is_not_found())
-                {
-                    return Ok(CaSResult::ExpectationMismatch);
-                }
-                return Err(anyhow::Error::msg(e).into());
-            }
-        }
-        let body = SdkBody::from(new.data);
-        let new_s3_seqno = S3SeqNo::from(&new.seqno);
-        let _res = self
-            .client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(self.build_s3_key(&key, &new_s3_seqno))
-            .body(ByteStream::new(body))
-            .if_none_match("*") // condition that states the object should not exist
-            .send()
-            .await
-            .map_err(anyhow::Error::msg)?;
-        Ok(CaSResult::Committed)
-    }
-
-    async fn scan(
-        &self,
-        key: &str,
-        from: SeqNo,
-        limit: usize,
-    ) -> Result<Vec<VersionedData>, ExternalError> {
-        let mut s3_seqno_list = Vec::with_capacity(1000.min(limit));
-        self.s3_list(format!("{}/{}/", &self.prefix, &key), |res| {
-            let next_page: Vec<_> = res
-                .contents()
-                .iter()
-                .filter_map(|entry| {
-                    entry
-                        .key()
-                        .map(|k| self.parse_s3_key(k).1)
-                        .filter(|s3_seqno| <&S3SeqNo as Into<SeqNo>>::into(s3_seqno) >= from)
-                })
-                .collect();
-            if next_page.is_empty() {
-                return Ok(false);
-            }
-            // If we find that scan is often called with a seqno that has a significant number of
-            // newer seqno and a small limit, it would mean that this vec is unecessarily large.
-            // We could convert to a VecDeq and drain from the front in each iteration here to maintain
-            // "limit" entries in agg.
-            s3_seqno_list.extend(next_page);
-
-            Ok(true)
-        })
-        .await?;
-
-        // the s3 listing is newest first (desc order), but scan must return in asc order
-        let mut results = Vec::with_capacity(limit.min(s3_seqno_list.len()));
-        while let Some(s3_seqno) = s3_seqno_list.pop() {
-            let res = self
-                .client
-                .get_object()
-                .bucket(&self.bucket)
-                .key(self.build_s3_key(key, &s3_seqno))
-                .send()
-                .await
-                .map_err(anyhow::Error::msg)?;
-            results.push(VersionedData {
-                seqno: (&s3_seqno).into(),
-                data: res
-                    .body
-                    .collect()
-                    .await
-                    .map_err(anyhow::Error::msg)?
-                    .into_bytes(),
-            });
-            if results.len() == limit {
-                break;
-            }
-        }
-        Ok(results)
-    }
-
-    async fn truncate(&self, key: &str, seqno: SeqNo) -> Result<usize, ExternalError> {
-        let mut s3_seqno_to_delete = vec![];
-        let mut greater_seq_exists = false;
-
-        self.s3_list(format!("{}/{}/", &self.prefix, key), |res| {
-            for entry in res.contents().iter() {
-                if let Some(s3_seqno) = entry.key().map(|k| self.parse_s3_key(k).1) {
-                    let found_seqno: SeqNo = (&s3_seqno).into();
-                    if found_seqno < seqno {
-                        s3_seqno_to_delete.push(s3_seqno);
-                    } else {
-                        greater_seq_exists = true;
-                    }
-                }
-            }
-            // because the s3 listing is in desc order, if a max_seqno hasn't been found in the first page,
-            // there isn't a sequence number >= the provided seqno. Based on the other implementations, this
-            // condition is an error.
-            if !greater_seq_exists {
-                return Err(anyhow!("No seqno >= {:?}", seqno));
-            }
-            Ok(true)
-        })
-        .await?;
-
-        let num_deletes = s3_seqno_to_delete.len();
-        for chunk in s3_seqno_to_delete.chunks(1000) {
-            let mut delete = Delete::builder().quiet(true);
-            for s3_seqno in chunk {
-                let s3_obj_id = ObjectIdentifier::builder()
-                    .key(self.build_s3_key(key, s3_seqno))
-                    .build()
-                    .expect("object identifier build");
-                delete = delete.objects(s3_obj_id);
-            }
-            let delete = delete.build().expect("delete payload");
-            let res = self
-                .client
-                .delete_objects()
-                .bucket(&self.bucket)
-                .delete(delete)
-                .send()
-                .await
-                .map_err(anyhow::Error::msg)?;
-            // delete from oldest to newest, if any delete fails, this entire call fails.
-            // unfortunately it means that we've deleted some of the data, but not all of it.
-            if !res.errors().is_empty() {
-                // log the errors, but only return the last one
-                let err = res
-                    .errors()
-                    .last()
-                    .unwrap()
-                    .message()
-                    .unwrap_or("S3 DeleteObject error")
-                    .to_string();
-                return Err(anyhow::Error::msg(err).into());
-            }
-        }
-        Ok(num_deletes)
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use crate::location::tests::blob_impl_test;
-    use crate::location::tests::consensus_impl_test;
     use tracing::info;
 
     use super::*;
@@ -1704,27 +1257,5 @@ mod tests {
             iter.collect::<Vec<_>>(),
             vec![(1, 0..10), (2, 10..20), (3, 20..21)]
         );
-    }
-
-    #[mz_ore::test]
-    fn test_s3_seqno_ordering() {
-        for range in [0..100, u64::MAX - 100..u64::MAX] {
-            let data = range
-                .map(|v| SeqNo(v))
-                .map(|seqno| (seqno, S3SeqNo::from(&seqno).to_string()))
-                .collect::<BTreeMap<_, _>>();
-            assert!(data.values().rev().is_sorted());
-            for (seqno, s3_seqno_str) in data.iter() {
-                let converted: SeqNo = (&s3_seqno_str.parse::<S3SeqNo>().unwrap()).into();
-                assert_eq!(*seqno, converted);
-            }
-        }
-    }
-
-    #[mz_ore::test(tokio::test(flavor = "multi_thread"))]
-    async fn s3_consensus() -> Result<(), ExternalError> {
-        let config = S3ConsensusConfig::new_for_test().await?;
-        consensus_impl_test(|| S3Consensus::new(config.clone())).await?;
-        Ok(())
     }
 }
