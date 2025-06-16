@@ -932,6 +932,14 @@ impl AggregatedStatistics {
         self.local_sink_statistics.get(id).map(|(_, s)| s)
     }
 
+    /// Get a collection of `SourceStatistics` for all known ids.
+    pub fn get_local_source_stats(&self) -> BTreeMap<GlobalId, SourceStatistics> {
+        self.local_source_statistics
+            .iter()
+            .map(|(id, (_epoch, stats))| (id.clone(), stats.clone()))
+            .collect()
+    }
+
     /// Deinitialize an object. Other methods other than `initialize_source` and `initialize_sink`
     /// will never overwrite this.
     pub fn deinitialize(&mut self, id: GlobalId) {

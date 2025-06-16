@@ -114,7 +114,7 @@ pub struct RawSourceCreationConfig {
     /// A handle to the persist client cache
     pub persist_clients: Arc<PersistClientCache>,
     /// Place to share statistics updates with storage state.
-    pub source_statistics: SourceStatistics,
+    pub statistics: BTreeMap<GlobalId, SourceStatistics>,
     /// Enables reporting the remap operator's write frontier.
     pub shared_remap_upper: Rc<RefCell<Antichain<mz_repr::Timestamp>>>,
     /// Configuration parameters, possibly from LaunchDarkly
@@ -152,6 +152,13 @@ impl RawSourceCreationConfig {
     /// Returns true if this worker is responsible for handling the given partition.
     pub fn responsible_for<P: Hash>(&self, partition: P) -> bool {
         self.responsible_worker(partition) == self.worker_id
+    }
+
+    /// Returns a `SourceStatistics` for the source.
+    pub fn source_statistics(&self) -> &SourceStatistics {
+        self.statistics
+            .get(&self.id)
+            .expect("statistics exist for the source")
     }
 }
 
@@ -302,7 +309,7 @@ where
 {
     let source_id = config.id;
     let worker_id = config.worker_id;
-    let source_statistics = config.source_statistics.clone();
+    let source_statistics = config.source_statistics().clone();
     let now_fn = config.now_fn.clone();
     let timestamp_interval = config.timestamp_interval;
 
@@ -319,7 +326,7 @@ where
         source_id,
         worker_id,
         stats,
-        source_statistics.clone(),
+        config.statistics.clone(),
     );
 
     let mut export_collections = BTreeMap::new();
@@ -464,7 +471,7 @@ where
         metrics: _,
         now_fn,
         persist_clients,
-        source_statistics: _,
+        statistics: _,
         shared_remap_upper,
         config: _,
         remap_collection_id,

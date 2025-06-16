@@ -7,6 +7,8 @@
 // the Business Source License, use of this software will be governed
 // by the Apache License, Version 2.0.
 
+use std::collections::BTreeMap;
+
 use futures::StreamExt;
 use mz_repr::GlobalId;
 use mz_storage_types::sources::SourceTimestamp;
@@ -22,7 +24,7 @@ pub fn process_statistics<G, FromTime>(
     source_id: GlobalId,
     worker_id: usize,
     stats_stream: Stream<G, ProgressStatisticsUpdate>,
-    source_statistics: SourceStatistics,
+    statistics: BTreeMap<GlobalId, SourceStatistics>,
 ) where
     G: Scope<Timestamp = FromTime>,
     FromTime: SourceTimestamp,
@@ -34,7 +36,9 @@ pub fn process_statistics<G, FromTime>(
 
     builder.build(move |caps| async move {
         drop(caps);
-
+        let source_statistics = statistics
+            .get(&source_id)
+            .expect("statistics are initialized");
         while let Some(event) = input.next().await {
             let AsyncEvent::Data(_, data) = event else {
                 continue;
@@ -50,11 +54,15 @@ pub fn process_statistics<G, FromTime>(
             for d in data {
                 match d {
                     ProgressStatisticsUpdate::Snapshot {
+                        export_id,
                         records_known,
                         records_staged,
                     } => {
-                        source_statistics.set_snapshot_records_known(records_known);
-                        source_statistics.set_snapshot_records_staged(records_staged);
+                        let stats = statistics
+                            .get(&export_id)
+                            .expect("statistics are initialzed");
+                        stats.set_snapshot_records_known(records_known);
+                        stats.set_snapshot_records_staged(records_staged);
                     }
                     ProgressStatisticsUpdate::SteadyState {
                         mut offset_known,
