@@ -54,15 +54,20 @@ pub fn process_statistics<G, FromTime>(
             for d in data {
                 match d {
                     ProgressStatisticsUpdate::Snapshot {
-                        export_id,
+                        export_ids,
                         records_known,
                         records_staged,
                     } => {
-                        let stats = statistics
-                            .get(&export_id)
-                            .expect("statistics are initialzed");
-                        stats.set_snapshot_records_known(records_known);
-                        stats.set_snapshot_records_staged(records_staged);
+                        for export_id in export_ids {
+                            let stats = statistics
+                                .get(&export_id)
+                                .expect("statistics are initialzed");
+                            stats.set_snapshot_records_known(records_known);
+                            stats.set_snapshot_records_staged(records_staged);
+                        }
+                        // for now, keep reporting snapshot statistics against the source
+                        source_statistics.set_snapshot_records_known(records_known);
+                        source_statistics.set_snapshot_records_staged(records_staged);
                     }
                     ProgressStatisticsUpdate::SteadyState {
                         mut offset_known,

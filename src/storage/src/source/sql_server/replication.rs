@@ -75,6 +75,17 @@ pub(crate) fn render<G: Scope<Timestamp = Lsn>>(
     let (definite_error_handle, definite_errors) =
         builder.new_output::<CapacityContainerBuilder<_>>();
 
+    let snapshot_export_ids: Vec<_> = outputs
+        .iter()
+        .filter_map(|(id, info)| {
+            if (info.resume_upper.as_ref() == &[Lsn::minimum()]) {
+                Some(id.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
     let (button, transient_errors) = builder.build_fallible(move |caps| {
         let busy_signal = Arc::clone(&config.busy_signal);
         Box::pin(SignaledFuture::new(busy_signal, async move {
@@ -136,6 +147,7 @@ pub(crate) fn render<G: Scope<Timestamp = Lsn>>(
                 // Small helper closure.
                 let emit_stats = |cap, known: usize, total: usize| {
                     let update = ProgressStatisticsUpdate::Snapshot {
+                        export_ids: snapshot_export_ids.clone(),
                         records_known: u64::cast_from(known),
                         records_staged: u64::cast_from(total),
                     };

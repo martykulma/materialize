@@ -260,7 +260,7 @@ fn render_reader<G: Scope<Timestamp = KafkaTimestamp>>(
     let (stats_output, stats_stream) = builder.new_output();
 
     let mut metadata_input = builder.new_disconnected_input(&metadata_stream.broadcast(), Pipeline);
-
+    let mut snapshot_export_ids = vec![];
     let mut outputs = vec![];
     for (idx, (id, export)) in config.source_exports.iter().enumerate() {
         let SourceExport {
@@ -276,6 +276,9 @@ fn render_reader<G: Scope<Timestamp = KafkaTimestamp>>(
                 .iter()
                 .map(Partitioned::<RangeBound<PartitionId>, MzOffset>::decode_row),
         );
+        if resume_upper.as_ref() == &[Partitioned::minimum()] {
+            snapshot_export_ids.push(id.clone());
+        }
 
         let metadata_columns = match details {
             SourceExportDetails::Kafka(details) => details
@@ -340,7 +343,7 @@ fn render_reader<G: Scope<Timestamp = KafkaTimestamp>>(
             );
 
             // Whether or not this instance of the dataflow is performing a snapshot.
-            let mut is_snapshotting = &*resume_upper == &[Partitioned::minimum()];
+            let mut is_snapshotting = !snapshot_export_ids.is_empty();
 
             for ts in resume_upper.elements() {
                 if let Some(pid) = ts.interval().singleton() {
@@ -915,6 +918,7 @@ fn render_reader<G: Scope<Timestamp = KafkaTimestamp>>(
                     stats_output.give(
                         &stats_cap,
                         ProgressStatisticsUpdate::Snapshot {
+                            export_ids: snapshot_export_ids.clone(),
                             records_known: snapshot_total,
                             records_staged: snapshot_staged,
                         },

@@ -221,6 +221,7 @@ pub(crate) fn render<G: Scope<Timestamp = MzOffset>>(
 
     // A global view of all outputs that will be snapshot by all workers.
     let mut all_outputs = vec![];
+    let mut snapshot_export_ids = vec![];
     // A filtered table info containing only the tables that this worker should snapshot.
     let mut reader_table_info = BTreeMap::new();
     for (table, outputs) in table_info.iter() {
@@ -230,6 +231,7 @@ pub(crate) fn render<G: Scope<Timestamp = MzOffset>>(
                 continue;
             }
             all_outputs.push(output_index);
+            snapshot_export_ids.push(output.export_id);
             if config.responsible_for(*table) {
                 reader_table_info
                     .entry(*table)
@@ -421,6 +423,7 @@ pub(crate) fn render<G: Scope<Timestamp = MzOffset>>(
             stats_output.give(
                 &stats_cap[0],
                 ProgressStatisticsUpdate::Snapshot {
+                    export_ids: snapshot_export_ids.clone(),
                     records_known: snapshot_total,
                     records_staged: 0,
                 },
@@ -494,6 +497,7 @@ pub(crate) fn render<G: Scope<Timestamp = MzOffset>>(
                             stats_output.give(
                                 &stats_cap[0],
                                 ProgressStatisticsUpdate::Snapshot {
+                                    export_ids: snapshot_export_ids.clone(),
                                     records_known: snapshot_total,
                                     records_staged: snapshot_staged,
                                 },
@@ -522,6 +526,7 @@ pub(crate) fn render<G: Scope<Timestamp = MzOffset>>(
             stats_output.give(
                 &stats_cap[0],
                 ProgressStatisticsUpdate::Snapshot {
+                    export_ids: snapshot_export_ids.clone(),
                     records_known: snapshot_staged,
                     records_staged: snapshot_staged,
                 },

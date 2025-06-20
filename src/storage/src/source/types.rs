@@ -49,7 +49,7 @@ pub enum ProgressStatisticsUpdate {
         offset_committed: u64,
     },
     Snapshot {
-        export_id: GlobalId,
+        export_ids: Vec<GlobalId>,
         records_known: u64,
         records_staged: u64,
     },

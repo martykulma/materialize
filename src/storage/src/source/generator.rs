@@ -152,7 +152,7 @@ impl GeneratorKind {
         // that need data output. Certain implementations rely on it (at the time of this comment
         // that includes the key-value load gen source).
         output_map.insert(LoadGeneratorOutput::Default, Vec::new());
-        for (idx, (_, export)) in config.source_exports.iter().enumerate() {
+        for (idx, (id, export)) in config.source_exports.iter().enumerate() {
             let output_type = match &export.details {
                 SourceExportDetails::LoadGenerator(details) => details.output,
                 // This is an export that doesn't need any data output to it.
@@ -162,7 +162,7 @@ impl GeneratorKind {
             output_map
                 .entry(output_type)
                 .or_insert_with(Vec::new)
-                .push(idx);
+                .push((idx, id));
         }
 
         match self {
@@ -233,7 +233,7 @@ fn render_simple_generator<G: Scope<Timestamp = MzOffset>>(
     scope: &G,
     config: &RawSourceCreationConfig,
     committed_uppers: impl futures::Stream<Item = Antichain<MzOffset>> + 'static,
-    output_map: BTreeMap<LoadGeneratorOutput, Vec<usize>>,
+    output_map: BTreeMap<LoadGeneratorOutput, Vec<(usize, GlobalId)>>,
 ) -> (
     BTreeMap<GlobalId, StackedCollection<G, Result<SourceMessage, DataflowError>>>,
     Stream<G, Infallible>,

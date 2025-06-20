@@ -153,6 +153,7 @@ pub(crate) fn render<G: Scope<Timestamp = GtidPartition>>(
     let mut all_outputs = vec![];
     // A map containing only the table infos that this worker should snapshot.
     let mut reader_snapshot_table_info = BTreeMap::new();
+    let mut snapshot_export_ids = vec![];
 
     for output in source_outputs.into_iter() {
         // Determine which outputs need to be snapshot and which already have been.
@@ -161,6 +162,7 @@ pub(crate) fn render<G: Scope<Timestamp = GtidPartition>>(
             continue;
         }
         all_outputs.push(output.output_index);
+        snapshot_export_ids.push(output.export_id);
         if config.responsible_for(&output.table_name) {
             reader_snapshot_table_info
                 .entry(output.table_name.clone())
@@ -195,6 +197,7 @@ pub(crate) fn render<G: Scope<Timestamp = GtidPartition>>(
                         stats_output.give(
                             &stats_cap[0],
                             ProgressStatisticsUpdate::Snapshot {
+                                export_ids: snapshot_export_ids.clone(),
                                 records_known: 0,
                                 records_staged: 0,
                             },
@@ -396,6 +399,7 @@ pub(crate) fn render<G: Scope<Timestamp = GtidPartition>>(
                 stats_output.give(
                     &stats_cap[0],
                     ProgressStatisticsUpdate::Snapshot {
+                        export_ids: snapshot_export_ids.clone(),
                         records_known: snapshot_total,
                         records_staged: 0,
                     },
@@ -450,6 +454,7 @@ pub(crate) fn render<G: Scope<Timestamp = GtidPartition>>(
                                 stats_output.give(
                                     &stats_cap[0],
                                     ProgressStatisticsUpdate::Snapshot {
+                                        export_ids: snapshot_export_ids.clone(),
                                         records_known: snapshot_total,
                                         records_staged: snapshot_staged,
                                     },
@@ -488,6 +493,7 @@ pub(crate) fn render<G: Scope<Timestamp = GtidPartition>>(
                 stats_output.give(
                     &stats_cap[0],
                     ProgressStatisticsUpdate::Snapshot {
+                        export_ids: snapshot_export_ids.clone(),
                         records_known: snapshot_total,
                         records_staged: snapshot_staged,
                     },
@@ -608,6 +614,7 @@ mod tests {
             exclude_columns: vec![],
             initial_gtid_set: Antichain::default(),
             resume_upper: Antichain::default(),
+            export_id: mz_repr::GlobalId::User(1),
         };
         let query = build_snapshot_query(&[info.clone(), info]);
         assert_eq!(

@@ -41,7 +41,7 @@ pub fn render<G: Scope<Timestamp = MzOffset>>(
     config: RawSourceCreationConfig,
     committed_uppers: impl futures::Stream<Item = Antichain<MzOffset>> + 'static,
     start_signal: impl std::future::Future<Output = ()> + 'static,
-    output_map: BTreeMap<LoadGeneratorOutput, Vec<usize>>,
+    output_map: BTreeMap<LoadGeneratorOutput, Vec<(usize, GlobalId)>>,
 ) -> (
     BTreeMap<GlobalId, StackedCollection<G, Result<SourceMessage, DataflowError>>>,
     Stream<G, Infallible>,

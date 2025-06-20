@@ -165,6 +165,7 @@ impl SourceRender for PostgresSourceConnection {
                 desc,
                 casts,
                 resume_upper,
+                export_id: id.clone(),
             };
             table_info
                 .entry(output.desc.oid)
@@ -270,6 +271,7 @@ struct SourceOutputInfo {
     desc: PostgresTableDesc,
     casts: Vec<(CastType, MirScalarExpr)>,
     resume_upper: Antichain<MzOffset>,
+    export_id: GlobalId,
 }
 
 #[derive(Clone, Debug, thiserror::Error)]

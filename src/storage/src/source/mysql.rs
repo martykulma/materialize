@@ -151,6 +151,7 @@ impl SourceRender for MySqlSourceConnection {
                 exclude_columns: details.exclude_columns.clone(),
                 initial_gtid_set: gtid_set_frontier(&initial_gtid_set).expect("invalid gtid set"),
                 resume_upper,
+                export_id: id.clone(),
             });
         }
 
@@ -251,6 +252,7 @@ struct SourceOutputInfo {
     exclude_columns: Vec<String>,
     initial_gtid_set: Antichain<GtidPartition>,
     resume_upper: Antichain<GtidPartition>,
+    export_id: GlobalId,
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
