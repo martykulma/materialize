@@ -106,6 +106,7 @@ pub(crate) fn render<G: Scope<Timestamp = Lsn>>(
             let mut export_ids_to_snapshot: BTreeMap<_, Vec<_>> = BTreeMap::new();
             // Maps the 'capture instance' to the output index for all outputs of this worker
             let mut capture_instances: BTreeMap<_, Vec<_>> = BTreeMap::new();
+            let mut min_initial_lsn = Lsn::minimum();
 
             for output in outputs.values() {
                 if decoder_map.insert(output.partition_index, Arc::clone(&output.decoder)).is_some() {
@@ -117,6 +118,7 @@ pub(crate) fn render<G: Scope<Timestamp = Lsn>>(
                     .push(output.partition_index);
 
                 if *output.resume_upper == [Lsn::minimum()] {
+                    min_initial_lsn = std::cmp::min(min_initial_lsn, output.initial_lsn);
                     export_ids_to_snapshot
                         .entry(Arc::clone(&output.capture_instance))
                         .or_default()
@@ -149,8 +151,12 @@ pub(crate) fn render<G: Scope<Timestamp = Lsn>>(
                 }
 
                 let (snapshot_lsn, snapshot_stats, snapshot_streams) = cdc_handle
-                    .snapshot(Some(capture_instances_to_snapshot), config.worker_id, config.id)
-                    .await?;
+                    .snapshot(
+                        Some(capture_instances_to_snapshot),
+                        config.worker_id,
+                        config.id,
+                        min_initial_lsn
+                    ).await?;
                 let snapshot_cap = data_cap_set.delayed(&snapshot_lsn);
 
                 // As we stream rows for the snapshot we'll track the total we've seen.
@@ -243,18 +249,6 @@ pub(crate) fn render<G: Scope<Timestamp = Lsn>>(
                         .iter()
                         .map(|(idx, initial_lsn)| (*idx, (*initial_lsn, snapshot_lsn)))
                 ).collect();
-
-            // For now, we assert that initial_lsn captured during purification is less
-            // than or equal to snapshot_lsn. If that was not true, it would mean that
-            // we observed a SQL server DB that appeared to go back in time.
-            // TODO (maz): not ideal to do this after snapshot, move this into
-            // CdcStream::snapshot after https://github.com/MaterializeInc/materialize/pull/32979 is merged.
-            for (initial_lsn, snapshot_lsn) in rewinds.values() {
-                assert!(
-                    initial_lsn <= snapshot_lsn,
-                    "initial_lsn={initial_lsn} snapshot_lsn={snapshot_lsn}"
-                );
-            }
 
             tracing::debug!("rewinds to process: {rewinds:?}");
 

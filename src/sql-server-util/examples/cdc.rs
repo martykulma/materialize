@@ -37,9 +37,10 @@
 
 use futures::StreamExt;
 use mz_ore::future::InTask;
-use mz_sql_server_util::cdc::CdcEvent;
+use mz_sql_server_util::cdc::{CdcEvent, Lsn};
 use mz_sql_server_util::config::TunnelConfig;
 use mz_sql_server_util::{Client, Config};
+use timely::progress::Timestamp;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -71,7 +72,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Get an initial snapshot of the table.
     let (lsn, stats, snapshot) = cdc_handle
-        .snapshot(None, 1, mz_repr::GlobalId::User(1))
+        .snapshot(None, 1, mz_repr::GlobalId::User(1), Lsn::minimum())
         .await?;
     tracing::info!("snapshot stats: {stats:?}");
     {

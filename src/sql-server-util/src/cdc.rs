@@ -147,11 +147,15 @@ impl<'a> CdcStream<'a> {
     /// replicating changes from.
     ///
     /// An optional `instances` parameter can be provided to only snapshot the specified instances.
+    ///
+    /// If the initial_lsn provided is not lower than or equal to the LSN for the
+    /// snapshot, this function will panic.
     pub async fn snapshot<'b>(
         &'b mut self,
         instances: Option<BTreeSet<Arc<str>>>,
         worker_id: usize,
         source_id: GlobalId,
+        initial_lsn: Lsn,
     ) -> Result<
         (
             Lsn,
@@ -238,6 +242,14 @@ impl<'a> CdcStream<'a> {
         fence_txn.rollback().await?;
 
         let lsn = txn.get_lsn().await?;
+
+        // The initial_lsn captured during purification must be than or equal to
+        // the snapshot LSN. If that was not true, it would mean that we observed
+        // a SQL server DB that appeared to go back in time.
+        assert!(
+            initial_lsn <= lsn,
+            "initial_lsn={initial_lsn} snapshot_lsn={lsn}"
+        );
 
         tracing::info!(%source_id, ?lsn, "timely-{worker_id} starting snapshot");
 
