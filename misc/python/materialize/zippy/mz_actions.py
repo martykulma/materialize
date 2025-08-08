@@ -90,7 +90,7 @@ class MzStart(Action):
                 restart="on-failure",
                 additional_system_parameter_defaults=self.additional_system_parameter_defaults,
                 metadata_store="cockroach",
-                default_replication_factor=2,
+                default_replication_factor=1,
             )
         ):
             c.up(state.mz_service)
@@ -168,7 +168,7 @@ class MzRestart(Action):
                 sanity_restart=False,
                 restart="on-failure",
                 metadata_store="cockroach",
-                default_replication_factor=2,
+                default_replication_factor=1,
             )
         ):
             c.kill(state.mz_service)
@@ -203,7 +203,7 @@ class Mz0dtDeploy(Mz0dtDeployBaseAction):
                 restart="on-failure",
                 healthcheck=LEADER_STATUS_HEALTHCHECK,
                 metadata_store="cockroach",
-                default_replication_factor=2,
+                default_replication_factor=1,
             ),
         ):
             c.up(state.mz_service, detach=True)

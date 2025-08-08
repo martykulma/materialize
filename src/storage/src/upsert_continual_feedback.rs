@@ -230,7 +230,7 @@ where
                     while let Some(persist_event) = persist_input.next_sync() {
                         match persist_event {
                             AsyncEvent::Data(time, data) => {
-                                tracing::trace!(
+                                tracing::info!(
                                     worker_id = %source_config.worker_id,
                                     source_id = %source_config.id,
                                     time=?time,
@@ -243,7 +243,7 @@ where
                                 }));
                             }
                             AsyncEvent::Progress(upper) => {
-                                tracing::trace!(
+                                tracing::info!(
                                     worker_id = %source_config.worker_id,
                                     source_id = %source_config.id,
                                     ?upper,
@@ -330,7 +330,7 @@ where
                     while let Some(event) = input.next_sync() {
                         match event {
                             AsyncEvent::Data(cap, mut data) => {
-                                tracing::trace!(
+                                tracing::info!(
                                     worker_id = %source_config.worker_id,
                                     source_id = %source_config.id,
                                     time=?cap.time(),
@@ -360,7 +360,7 @@ where
                                 }
 
                                 if prevent_snapshot_buffering && input_upper.as_option() == Some(&event_time) {
-                                    tracing::debug!(
+                                    tracing::info!(
                                         worker_id = %source_config.worker_id,
                                         source_id = %source_config.id,
                                         ?event_time,
@@ -369,7 +369,7 @@ where
                                         "allowing partial drain");
                                     partial_drain_time = Some(event_time.clone());
                                 } else {
-                                    tracing::debug!(
+                                    tracing::info!(
                                         worker_id = %source_config.worker_id,
                                         source_id = %source_config.id,
                                         %prevent_snapshot_buffering,
@@ -380,7 +380,7 @@ where
                                 }
                             }
                             AsyncEvent::Progress(upper) => {
-                                tracing::trace!(
+                                tracing::info!(
                                     worker_id = %source_config.worker_id,
                                     source_id = %source_config.id,
                                     ?upper,
@@ -389,7 +389,7 @@ where
                                 // Ignore progress updates before the `resume_upper`, which is our initial
                                 // capability post-snapshotting.
                                 if PartialOrder::less_than(&upper, &resume_upper) {
-                                    tracing::trace!(
+                                    tracing::info!(
                                         worker_id = %source_config.worker_id,
                                         source_id = %source_config.id,
                                         ?upper,
@@ -455,7 +455,7 @@ where
                 )
                 .await;
 
-                tracing::trace!(
+                tracing::info!(
                     worker_id = %source_config.worker_id,
                     source_id = %source_config.id,
                     output_updates = %output_updates.len(),
@@ -516,7 +516,7 @@ where
                     )
                     .await;
 
-                    tracing::trace!(
+                    tracing::info!(
                         worker_id = %source_config.worker_id,
                         source_id = %source_config.id,
                         output_updates = %output_updates.len(),
@@ -676,7 +676,7 @@ where
         })
         .collect_vec();
 
-    tracing::debug!(
+    tracing::info!(
         worker_id = %source_config.worker_id,
         source_id = %source_config.id,
         ?drain_style,
@@ -872,7 +872,7 @@ where
             }
         }
         style => {
-            tracing::trace!(
+            tracing::info!(
                 worker_id = %source_config.worker_id,
                 source_id = %source_config.id,
                 "not doing state update for drain style {:?}", style);

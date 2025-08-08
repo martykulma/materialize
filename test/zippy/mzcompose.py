@@ -30,6 +30,7 @@ from materialize.mzcompose.services.clusterd import Clusterd
 from materialize.mzcompose.services.cockroach import Cockroach
 from materialize.mzcompose.services.debezium import Debezium
 from materialize.mzcompose.services.grafana import Grafana
+from materialize.mzcompose.services.kafka import Kafka
 from materialize.mzcompose.services.materialized import Materialized
 from materialize.mzcompose.services.minio import Mc, Minio
 from materialize.mzcompose.services.mysql import MySql
@@ -37,6 +38,7 @@ from materialize.mzcompose.services.persistcli import Persistcli
 from materialize.mzcompose.services.postgres import Postgres
 from materialize.mzcompose.services.prometheus import Prometheus
 from materialize.mzcompose.services.redpanda import Redpanda
+from materialize.mzcompose.services.schema_registry import SchemaRegistry
 from materialize.mzcompose.services.ssh_bastion_host import (
     SshBastionHost,
     setup_default_ssh_test_connection,
@@ -62,7 +64,7 @@ def create_mzs(
             sanity_restart=False,
             metadata_store="cockroach",
             additional_system_parameter_defaults=additional_system_parameter_defaults,
-            default_replication_factor=2,
+            default_replication_factor=1,
             support_external_clusterd=True,
         )
         for mz_name in ["materialized", "materialized2"]
@@ -86,8 +88,9 @@ def create_mzs(
 
 SERVICES = [
     Zookeeper(),
-    Redpanda(auto_create_topics=True),
-    Debezium(redpanda=True),
+    # Redpanda(auto_create_topics=True),
+    # Debezium(redpanda=True),
+    Debezium(),
     Postgres(),
     Cockroach(),
     Minio(setup_materialize=True, additional_directories=["copytos3"]),
@@ -101,6 +104,8 @@ SERVICES = [
     SshBastionHost(),
     Persistcli(),
     MySql(),
+    Kafka(auto_create_topics=True),
+    SchemaRegistry(),
 ]
 
 
@@ -194,7 +199,8 @@ def workflow_default(c: Composition, parser: WorkflowArgumentParser) -> None:
 
     dependencies = [
         "zookeeper",
-        "redpanda",
+        "kafka",
+        "schema-registry",
         "ssh-bastion-host",
         "minio",
         Service("mc", idle=True),
