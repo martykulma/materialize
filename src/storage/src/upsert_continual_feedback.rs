@@ -230,11 +230,13 @@ where
                     while let Some(persist_event) = persist_input.next_sync() {
                         match persist_event {
                             AsyncEvent::Data(time, data) => {
+                                let f:Vec<_> = data.iter().map(|((_, res), ts, diff)| (res, ts, diff)).collect();
                                 tracing::info!(
                                     worker_id = %source_config.worker_id,
                                     source_id = %source_config.id,
                                     time=?time,
                                     updates=%data.len(),
+                                    f=?f,
                                     "received persist data");
 
                                 persist_stash.extend(data.into_iter().map(|((key, value), ts, diff)| {
@@ -335,6 +337,7 @@ where
                                     source_id = %source_config.id,
                                     time=?cap.time(),
                                     updates=%data.len(),
+                                    f=?data,
                                     "received data");
 
                                 let event_time = cap.time().clone();
@@ -455,10 +458,12 @@ where
                 )
                 .await;
 
+                let f:Vec<_> = output_updates.iter().map(|(res, ts, diff)| (res, ts, diff)).collect();
                 tracing::info!(
                     worker_id = %source_config.worker_id,
                     source_id = %source_config.id,
                     output_updates = %output_updates.len(),
+                    f = ?f,
                     "output updates for complete timestamp");
 
                 for (update, ts, diff) in output_updates.drain(..) {
@@ -515,11 +520,13 @@ where
                         &source_config,
                     )
                     .await;
+                    let f:Vec<_> = output_updates.iter().map(|(res, ts, diff)| (res, ts, diff)).collect();
 
                     tracing::info!(
                         worker_id = %source_config.worker_id,
                         source_id = %source_config.id,
                         output_updates = %output_updates.len(),
+                        f = ?f,
                         "output updates for partial timestamp");
 
                     for (update, ts, diff) in output_updates.drain(..) {
@@ -614,7 +621,7 @@ where
     S: UpsertStateBackend<T, Option<FromTime>>,
     G: Scope,
     T: TotalOrder + timely::ExchangeData + Debug + Ord + Sync,
-    FromTime: timely::ExchangeData + Ord + Sync,
+    FromTime: timely::ExchangeData + Ord + Sync + Debug,
     E: UpsertErrorEmitter<G>,
 {
     let mut min_remaining_time = Antichain::new();
@@ -742,6 +749,17 @@ where
         } else {
             panic!("key missing from commands_state");
         };
+        let key_dbg = format!("{key:?}");
+
+        tracing::info!(
+        worker_id = %source_config.worker_id,
+        source_id = %source_config.id,
+        ?ts,
+        %key_dbg,
+        from_time = ?(from_time.0),
+        ?value,
+        ?command_state,
+        "processing command");
 
         let existing_state_cell = &mut command_state.get_mut().value;
 
@@ -761,6 +779,12 @@ where
             // end up writing the same value back to state. If there
             // is nothing in the state, `existing_order` is `None`, and this
             // does not occur.
+            tracing::info!(
+            worker_id = %source_config.worker_id,
+            source_id = %source_config.id,
+            %key_dbg,
+            ?existing_state_cell,
+            "skipping update");
             continue;
         }
 
@@ -788,7 +812,12 @@ where
                                 Some(from_time.0.clone()),
                             ),
                         };
-
+                        tracing::info!(
+                        worker_id = %source_config.worker_id,
+                        source_id = %source_config.id,
+                        %key_dbg,
+                        ?new_value,
+                        "update state: UPDATE");
                         existing_state_cell.replace(new_value);
                     }
                     DrainStyle::ToUpper { .. } => {
@@ -817,6 +846,12 @@ where
                                 Some(from_time.0.clone()),
                             ),
                         };
+                        tracing::info!(
+                        worker_id = %source_config.worker_id,
+                        source_id = %source_config.id,
+                        %key_dbg,
+                        ?new_value,
+                        "update state: DELETE");
 
                         existing_state_cell.replace(new_value);
                     }

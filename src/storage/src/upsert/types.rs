@@ -124,7 +124,11 @@ pub struct UpsertValueAndSize<T, O> {
     pub metadata: Option<ValueMetadata<u64>>,
 }
 
-impl<T, O> std::fmt::Debug for UpsertValueAndSize<T, O> {
+impl<T, O> std::fmt::Debug for UpsertValueAndSize<T, O>
+where
+    T: std::fmt::Debug,
+    O: std::fmt::Debug,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("UpsertValueAndSize")
             .field("value", &self.value)
@@ -189,20 +193,24 @@ pub struct MergeValue<V> {
 /// `O` typically required to be `: Default`, with the default value sorting below all others.
 /// During consolidation, values consolidate correctly (as they are actual
 /// differential updates with diffs), so order keys are not required.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum StateValue<T, O> {
     Consolidating(Consolidating),
     Value(Value<T, O>),
 }
 
-impl<T, O> std::fmt::Debug for StateValue<T, O> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            StateValue::Consolidating(_) => write!(f, "Consolidating"),
-            StateValue::Value(_) => write!(f, "Value"),
-        }
-    }
-}
+// impl<T, O> std::fmt::Debug for StateValue<T, O>
+// where
+//     T: std::fmt::Debug,
+//     O: std::fmt::Debug,
+// {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         match self {
+//             StateValue::Consolidating(_) => write!(f, "Consolidating"),
+//             StateValue::Value(_) => write!(f, "Value"),
+//         }
+//     }
+// }
 
 /// A totally consolidated value stored within the `UpsertStateBackend`.
 ///
