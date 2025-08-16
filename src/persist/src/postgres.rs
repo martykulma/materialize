@@ -38,7 +38,7 @@ use crate::location::{CaSResult, Consensus, ExternalError, ResultStream, SeqNo, 
 /// Flag to use concensus queries that are tuned for vanilla Postgres.
 pub const USE_POSTGRES_TUNED_QUERIES: mz_dyncfg::Config<bool> = mz_dyncfg::Config::new(
     "persist_use_postgres_tuned_queries",
-    false,
+    true,
     "Use a set of queries for consensus that have specifically been tuned against
     Postgres to ensure we acquire a minimal number of locks.",
 );
@@ -327,7 +327,7 @@ impl PostgresConsensus {
 #[async_trait]
 impl Consensus for PostgresConsensus {
     fn list_keys(&self) -> ResultStream<'_, String> {
-        let q = "SELECT DISTINCT shard FROM consensus";
+        let q = "SELECT DISTINCT shard FROM consensus WHERE sequence_number > -1";
 
         Box::pin(try_stream! {
             // NB: it's important that we hang on to this client for the lifetime of the stream,
@@ -345,7 +345,7 @@ impl Consensus for PostgresConsensus {
 
     async fn head(&self, key: &str) -> Result<Option<VersionedData>, ExternalError> {
         let q = "SELECT sequence_number, data FROM consensus
-             WHERE shard = $1 ORDER BY sequence_number DESC LIMIT 1";
+             WHERE shard = $1 AND sequence_number > -1 ORDER BY sequence_number DESC LIMIT 1";
         let row = {
             let client = self.get_connection().await?;
             let statement = client.prepare_cached(q).await?;
@@ -379,14 +379,32 @@ impl Consensus for PostgresConsensus {
             }
         }
 
-        let result = if let Some(expected) = expected {
-            /// This query has been written to execute within a single
-            /// network round-trip. The insert performance has been tuned
-            /// against CockroachDB, ensuring it goes through the fast-path
-            /// 1-phase commit of CRDB. Any changes to this query should
-            /// confirm an EXPLAIN ANALYZE (VERBOSE) query plan contains
-            /// `auto commit`
-            static CRDB_CAS_QUERY: &str = "
+        let curr_seq_no = if expected.is_none() {
+            // This may or may not insert a row (we may have raced with another insert). The real
+            // test comes next when each prospect tries to lock this row and insert the next.
+            let q = "INSERT INTO consensus SELECT $1, $2, $3 WHERE
+                     NOT EXISTS (
+                         SELECT * FROM consensus WHERE shard = $1
+                     )
+                     ON CONFLICT DO NOTHING";
+            let client = self.get_connection().await?;
+            let statement = client.prepare_cached(q).await?;
+            let empty = Bytes::new();
+            client
+                .execute(&statement, &[&key, &-1i64, &empty.as_ref()])
+                .await?;
+            -1
+        } else {
+            i64::try_from(expected.unwrap().0).expect("valid seqno range is 0-i64::MAX")
+        };
+
+        /// This query has been written to execute within a single
+        /// network round-trip. The insert performance has been tuned
+        /// against CockroachDB, ensuring it goes through the fast-path
+        /// 1-phase commit of CRDB. Any changes to this query should
+        /// confirm an EXPLAIN ANALYZE (VERBOSE) query plan contains
+        /// `auto commit`
+        static CRDB_CAS_QUERY: &str = "
                 INSERT INTO consensus (shard, sequence_number, data)
                 SELECT $1, $2, $3
                 WHERE (SELECT sequence_number FROM consensus
@@ -394,11 +412,11 @@ impl Consensus for PostgresConsensus {
                        ORDER BY sequence_number DESC LIMIT 1) = $4;
             ";
 
-            /// This query has been written to ensure we only get row level
-            /// locks on the `(shard, seq_no)` we're trying to update. The insert
-            /// performance has been tuned against Postgres 15 to ensure it
-            /// minimizes possible serialization conflicts.
-            static POSTGRES_CAS_QUERY: &str = "
+        /// This query has been written to ensure we only get row level
+        /// locks on the `(shard, seq_no)` we're trying to update. The insert
+        /// performance has been tuned against Postgres 15 to ensure it
+        /// minimizes possible serialization conflicts.
+        static POSTGRES_CAS_QUERY: &str = "
             WITH last_seq AS (
                 SELECT sequence_number FROM consensus
                 WHERE shard = $1
@@ -412,35 +430,21 @@ impl Consensus for PostgresConsensus {
             WHERE last_seq.sequence_number = $4;
             ";
 
-            let q = if USE_POSTGRES_TUNED_QUERIES.get(&self.dyncfg)
-                && self.mode == PostgresMode::Postgres
-            {
-                POSTGRES_CAS_QUERY
-            } else {
-                CRDB_CAS_QUERY
-            };
-            let client = self.get_connection().await?;
-            let statement = client.prepare_cached(q).await?;
-            client
-                .execute(
-                    &statement,
-                    &[&key, &new.seqno, &new.data.as_ref(), &expected],
-                )
-                .await?
+        let q = if USE_POSTGRES_TUNED_QUERIES.get(&self.dyncfg)
+            && self.mode == PostgresMode::Postgres
+        {
+            POSTGRES_CAS_QUERY
         } else {
-            // Insert the new row as long as no other row exists for the same shard.
-            let q = "INSERT INTO consensus SELECT $1, $2, $3 WHERE
-                     NOT EXISTS (
-                         SELECT * FROM consensus WHERE shard = $1
-                     )
-                     ON CONFLICT DO NOTHING";
-            let client = self.get_connection().await?;
-            let statement = client.prepare_cached(q).await?;
-            client
-                .execute(&statement, &[&key, &new.seqno, &new.data.as_ref()])
-                .await?
+            CRDB_CAS_QUERY
         };
-
+        let client = self.get_connection().await?;
+        let statement = client.prepare_cached(q).await?;
+        let result = client
+            .execute(
+                &statement,
+                &[&key, &new.seqno, &new.data.as_ref(), &curr_seq_no],
+            )
+            .await?;
         if result == 1 {
             Ok(CaSResult::Committed)
         } else {
@@ -514,6 +518,7 @@ impl Consensus for PostgresConsensus {
             SELECT ctid FROM consensus
             WHERE shard = $1
             AND sequence_number < $2
+            AND sequence_number > -1
             AND EXISTS (SELECT * FROM newer_exists)
             ORDER BY sequence_number DESC
             FOR UPDATE
