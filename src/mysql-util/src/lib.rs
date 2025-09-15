@@ -21,7 +21,7 @@ pub use tunnel::{
 
 mod desc;
 pub use desc::{
-    MySqlColumnDesc, MySqlKeyDesc, MySqlTableDesc, ProtoMySqlColumnDesc, ProtoMySqlKeyDesc,
+    MySqlColumnDesc, MySqlColumnMeta, MySqlKeyDesc, MySqlTableDesc, ProtoMySqlColumnDesc, ProtoMySqlKeyDesc,
     ProtoMySqlTableDesc,
 };
 

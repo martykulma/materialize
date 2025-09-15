@@ -59,6 +59,7 @@ use std::rc::Rc;
 use differential_dataflow::AsCollection;
 use differential_dataflow::containers::TimelyStack;
 use itertools::Itertools;
+use mysql_async::binlog::events::BadColumnType;
 use mz_mysql_util::quote_identifier;
 use mz_ore::cast::CastFrom;
 use mz_repr::Diff;
@@ -276,6 +277,8 @@ pub enum TransientError {
     IdentError(#[from] mz_sql_parser::ast::IdentError),
     #[error(transparent)]
     MySqlError(#[from] MySqlError),
+    #[error(transparent)]
+    MySqlBadColumnType(#[from] BadColumnType),
     #[error(transparent)]
     Generic(#[from] anyhow::Error),
 }

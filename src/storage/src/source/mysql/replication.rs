@@ -319,7 +319,7 @@ pub(crate) fn render<G: Scope<Timestamp = GtidPartition>>(
                 &config,
                 &connection_config,
                 stream.as_mut(),
-                &table_info,
+                &mut table_info,
                 &metrics,
                 &mut data_output,
                 data_cap_set,
@@ -402,7 +402,7 @@ pub(crate) fn render<G: Scope<Timestamp = GtidPartition>>(
 
                         events::handle_rows_event(
                             data,
-                            &repl_context,
+                            &mut repl_context,
                             &cur_gtid,
                             &mut row_event_buffer,
                         )

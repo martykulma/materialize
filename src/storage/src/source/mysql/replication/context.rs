@@ -32,7 +32,7 @@ pub(super) struct ReplContext<'a> {
     pub(super) config: &'a RawSourceCreationConfig,
     pub(super) connection_config: &'a Config,
     pub(super) stream: Pin<&'a mut futures::stream::Peekable<BinlogStream>>,
-    pub(super) table_info: &'a BTreeMap<MySqlTableName, Vec<SourceOutputInfo>>,
+    pub(super) table_info: &'a mut BTreeMap<MySqlTableName, Vec<SourceOutputInfo>>,
     pub(super) metrics: &'a MySqlSourceMetrics,
     pub(super) data_output: &'a mut StackedAsyncOutputHandle<
         GtidPartition,
@@ -50,7 +50,7 @@ impl<'a> ReplContext<'a> {
         config: &'a RawSourceCreationConfig,
         connection_config: &'a Config,
         stream: Pin<&'a mut futures::stream::Peekable<BinlogStream>>,
-        table_info: &'a BTreeMap<MySqlTableName, Vec<SourceOutputInfo>>,
+        table_info: &'a mut BTreeMap<MySqlTableName, Vec<SourceOutputInfo>>,
         metrics: &'a MySqlSourceMetrics,
         data_output: &'a mut StackedAsyncOutputHandle<
             GtidPartition,

@@ -1,0 +1,3 @@
+questions
+- do we get TableMapEvents in the case of replication MySQL servers? E.g. given the chain replication A -> B -> MZ, if user alters a table on A that is replication to B and finally to MZ, does MZ see 
+ 

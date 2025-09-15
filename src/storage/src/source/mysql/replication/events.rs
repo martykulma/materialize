@@ -7,9 +7,11 @@
 // the Business Source License, use of this software will be governed
 // by the Apache License, Version 2.0.
 
+use itertools::Itertools;
 use maplit::btreemap;
+use mysql_async::consts::ColumnType;
 use mysql_common::binlog::events::{QueryEvent, RowsEventData};
-use mz_mysql_util::{MySqlError, pack_mysql_row};
+use mz_mysql_util::{MySqlColumnMeta, MySqlError, pack_mysql_row};
 use mz_ore::iter::IteratorExt;
 use mz_repr::{Diff, Row};
 use mz_storage_types::errors::DataflowError;
@@ -230,7 +232,7 @@ pub(super) async fn handle_query_event(
 /// frontier with which to advance the dataflow's progress.
 pub(super) async fn handle_rows_event(
     event: RowsEventData<'_>,
-    ctx: &ReplContext<'_>,
+    ctx: &mut ReplContext<'_>,
     new_gtid: &GtidPartition,
     event_buffer: &mut Vec<(
         (usize, Result<SourceMessage, DataflowError>),
@@ -252,13 +254,13 @@ pub(super) async fn handle_rows_event(
         &*table_map_event.table_name(),
     );
 
-    let outputs = ctx.table_info.get(&table).map(|outputs| {
+    let outputs = ctx.table_info.get_mut(&table).map(|outputs| {
         outputs
             .into_iter()
             .filter(|output| !ctx.errored_outputs.contains(&output.output_index))
             .collect::<Vec<_>>()
     });
-    let outputs = match outputs {
+    let mut outputs = match outputs {
         Some(outputs) => outputs,
         None => {
             // We don't know about this table, or there are no un-errored outputs for it.
@@ -267,6 +269,47 @@ pub(super) async fn handle_rows_event(
     };
 
     trace!(%id, "timely-{worker_id} handling RowsEvent for {table:?}");
+
+    let mut enum_cols = vec![];
+
+    for i in 0..table_map_event.columns_count() as usize {
+        if table_map_event
+            .get_column_type(i)?
+            .is_some_and(|v| matches!(v, ColumnType::MYSQL_TYPE_ENUM))
+        {
+            enum_cols.push(i);
+        }
+    }
+    let mut enum_values = vec![];
+
+    for meta in table_map_event.iter_optional_meta() {
+        match meta? {
+            mysql_async::binlog::events::OptionalMetadataField::EnumStrValue(enums_str_values) => {
+                for enum_str in enums_str_values.iter_values() {
+                    let enum_str = enum_str?;
+                    let variants = enum_str.num_variants();
+                    let values: Vec<_> = enum_str
+                        .values()
+                        .iter()
+                        .map(|es| es.value().to_string())
+                        .collect();
+                    tracing::info!("------ variants = {variants} values = {values:?}");
+                    enum_values.push(values);
+                }
+            }
+            _ => (), // pass
+        }
+    }
+
+    for (col_idx, new_enum_mappings) in enum_cols.iter().zip_eq(enum_values) {
+        for output in outputs.iter_mut() {
+            let t = output.desc.columns.get_mut(*col_idx).unwrap();
+            if let Some(MySqlColumnMeta::Enum(ref mut a)) = t.meta {
+                a.values.clear();
+                a.values.extend_from_slice(&new_enum_mappings);
+            }
+        }
+    }
 
     // Capability for this event.
     let gtid_cap = ctx.data_cap_set.delayed(new_gtid);
