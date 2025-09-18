@@ -49,12 +49,12 @@ EXEC sys.sp_cdc_enable_table @source_schema = 'dbo', @source_name = 'unique_null
 > CREATE DEFAULT INDEX ON unique_nullable;
 
 # TODO: This should be f1,f2 instead of f1,f2,f3
-#> SELECT key FROM (SHOW INDEXES ON pk);
-#{f1,f2}
+> SELECT key FROM (SHOW INDEXES ON pk);
+{f1,f2}
 
 # TODO: This should be f1,f2 instead of f1,f2,f3
-#> SELECT key FROM (SHOW INDEXES ON unique_not_null);
-#{f1,f2}
+> SELECT key FROM (SHOW INDEXES ON unique_not_null);
+{f1,f2}
 
 > SELECT key FROM (SHOW INDEXES ON unique_nullable);
 {f1,f2,f3}
