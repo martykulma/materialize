@@ -24,6 +24,7 @@ use mz_ore::metrics::MetricsRegistry;
 pub mod maelstrom;
 pub mod open_loop;
 pub mod service;
+pub mod aggro;
 
 #[derive(Debug, clap::Parser)]
 #[clap(about = "Persist command-line utilities", long_about = None)]
