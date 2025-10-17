@@ -49,8 +49,13 @@ CREATE TABLE IF NOT EXISTS consensus (
     sequence_number bigint NOT NULL,
     data bytea NOT NULL,
     PRIMARY KEY(shard, sequence_number)
-)
-";
+)";
+
+const GC_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS consensus_gc (
+    shard text PRIMARY KEY,
+    sequence_number bigint NOT NULL
+)";
 
 // These `sql_stats_automatic_collection_enabled` are for the cost-based
 // optimizer but all the queries against this table are single-table and very
@@ -268,7 +273,7 @@ impl PostgresConsensus {
 
         if mode != PostgresMode::CockroachDB {
             client
-                .batch_execute(&format!("{}; {};", create_schema, SCHEMA))
+                .batch_execute(&format!("{}; {}; {};", create_schema, SCHEMA, GC_SCHEMA))
                 .await?;
         }
 
@@ -286,6 +291,9 @@ impl PostgresConsensus {
         // this could be a TRUNCATE if we're confident the db won't reuse any state
         let client = self.get_connection().await?;
         client.execute("DROP TABLE consensus", &[]).await?;
+        client
+            .execute("DROP TABLE IF EXISTS consensus_gc", &[])
+            .await?;
         let crdb_mode = match client
             .batch_execute(&format!(
                 "{}{}; {}",
@@ -315,6 +323,7 @@ impl PostgresConsensus {
 
         if !crdb_mode {
             client.execute(SCHEMA, &[]).await?;
+            client.execute(GC_SCHEMA, &[]).await?;
         }
         Ok(())
     }
@@ -327,7 +336,11 @@ impl PostgresConsensus {
 #[async_trait]
 impl Consensus for PostgresConsensus {
     fn list_keys(&self) -> ResultStream<'_, String> {
-        let q = "SELECT DISTINCT shard FROM consensus WHERE sequence_number > -1";
+        let q = "
+        SELECT DISTINCT shard
+        FROM consensus c LEFT JOIN consensus_gc gc USING (shard)
+        WHERE c.sequence_number > coalesce(gc.sequence_number, -1);
+        ";
 
         Box::pin(try_stream! {
             // NB: it's important that we hang on to this client for the lifetime of the stream,
@@ -379,9 +392,12 @@ impl Consensus for PostgresConsensus {
             }
         }
 
-        let curr_seq_no = if expected.is_none() {
+        let curr_seq_no = if let Some(val) = expected {
+            i64::try_from(val.0).expect("valid seqno range is 0-i64::MAX")
+        } else {
             // This may or may not insert a row (we may have raced with another insert). The real
             // test comes next when each prospect tries to lock this row and insert the next.
+            let sentinel = -1_i64;
             let q = "INSERT INTO consensus SELECT $1, $2, $3 WHERE
                      NOT EXISTS (
                          SELECT * FROM consensus WHERE shard = $1
@@ -391,11 +407,9 @@ impl Consensus for PostgresConsensus {
             let statement = client.prepare_cached(q).await?;
             let empty = Bytes::new();
             client
-                .execute(&statement, &[&key, &-1i64, &empty.as_ref()])
+                .execute(&statement, &[&key, &sentinel, &empty.as_ref()])
                 .await?;
-            -1
-        } else {
-            i64::try_from(expected.unwrap().0).expect("valid seqno range is 0-i64::MAX")
+            sentinel
         };
 
         /// This query has been written to execute within a single
@@ -417,17 +431,18 @@ impl Consensus for PostgresConsensus {
         /// performance has been tuned against Postgres 15 to ensure it
         /// minimizes possible serialization conflicts.
         static POSTGRES_CAS_QUERY: &str = "
-            WITH last_seq AS (
-                SELECT sequence_number FROM consensus
-                WHERE shard = $1
-                ORDER BY sequence_number DESC
-                LIMIT 1
-                FOR UPDATE
+            WITH inserted AS (
+                INSERT INTO consensus (shard, sequence_number, data)
+                SELECT $1, $2, $3
+                WHERE (SELECT sequence_number FROM consensus
+                       WHERE shard = $1
+                       ORDER BY sequence_number DESC LIMIT 1) = $4
+                ON CONFLICT DO NOTHING
+                RETURNING shard, sequence_number
             )
-            INSERT INTO consensus (shard, sequence_number, data)
-            SELECT $1, $2, $3
-            FROM last_seq
-            WHERE last_seq.sequence_number = $4;
+            SELECT i.sequence_number as inserted, gc.sequence_number as gc_bound
+            FROM inserted i
+            LEFT JOIN consensus_gc gc USING (shard);
             ";
 
         let q = if USE_POSTGRES_TUNED_QUERIES.get(&self.dyncfg)
@@ -439,16 +454,24 @@ impl Consensus for PostgresConsensus {
         };
         let client = self.get_connection().await?;
         let statement = client.prepare_cached(q).await?;
-        let result = client
-            .execute(
+        let row = client
+            .query_opt(
                 &statement,
                 &[&key, &new.seqno, &new.data.as_ref(), &curr_seq_no],
             )
             .await?;
-        if result == 1 {
-            Ok(CaSResult::Committed)
-        } else {
+
+        let Some(row) = row else {
+            return Ok(CaSResult::ExpectationMismatch);
+        };
+
+        let inserted: SeqNo = row.try_get("inserted")?;
+        let gc_bound: Option<SeqNo> = row.try_get("gc_bound")?;
+        // if truncate has moved past this sequence number, then it's a failure.
+        if gc_bound.is_some_and(|bound| inserted < bound) {
             Ok(CaSResult::ExpectationMismatch)
+        } else {
+            Ok(CaSResult::Committed)
         }
     }
 
@@ -506,31 +529,40 @@ impl Consensus for PostgresConsensus {
         /// minimal conflict between concurrently running truncate and append
         /// operations.
         static POSTGRES_TRUNCATE_QUERY: &str = "
-        WITH newer_exists AS (
-            SELECT * FROM consensus
-            WHERE shard = $1
-                AND sequence_number >= $2
-            ORDER BY sequence_number ASC
-            LIMIT 1
-            FOR UPDATE
-        ),
-        to_lock AS (
-            SELECT ctid FROM consensus
-            WHERE shard = $1
-            AND sequence_number < $2
-            AND sequence_number > -1
-            AND EXISTS (SELECT * FROM newer_exists)
-            ORDER BY sequence_number DESC
-            FOR UPDATE
-        )
         DELETE FROM consensus
-        USING to_lock
-        WHERE consensus.ctid = to_lock.ctid;
+        WHERE shard = $1 AND sequence_number < $2 AND sequence_number >= 0 AND
+        EXISTS (
+            SELECT * FROM consensus WHERE shard = $1 AND sequence_number >= $2
+        )
         ";
+
+        static POSTGRES_MARK_QUERY: &str = "
+        INSERT INTO consensus_gc
+        SELECT $1, $2
+        WHERE EXISTS (SELECT * FROM consensus WHERE shard = $1 AND sequence_number >= $2)
+        ON CONFLICT (shard)
+        DO UPDATE SET sequence_number = EXCLUDED.sequence_number
+        WHERE consensus_gc.sequence_number < EXCLUDED.sequence_number;
+        ";
+
+        let client = self.get_connection().await?;
 
         let q = if USE_POSTGRES_TUNED_QUERIES.get(&self.dyncfg)
             && self.mode == PostgresMode::Postgres
         {
+            let result = {
+                let statement = client.prepare_cached(POSTGRES_MARK_QUERY).await?;
+                client.execute(&statement, &[&key, &seqno]).await?
+            };
+            if result == 0 {
+                let current = self.head(key).await?;
+                if current.map_or(true, |data| data.seqno < seqno) {
+                    return Err(ExternalError::from(anyhow!(
+                        "upper bound too high for truncate: {:?}",
+                        seqno
+                    )));
+                }
+            }
             POSTGRES_TRUNCATE_QUERY
         } else {
             CRDB_TRUNCATE_QUERY
