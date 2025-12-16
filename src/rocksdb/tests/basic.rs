@@ -7,6 +7,8 @@
 // the Business Source License, use of this software will be governed
 // by the Apache License, Version 2.0.
 
+use std::time::Duration;
+
 use mz_ore::metrics::MetricVecExt;
 use mz_rocksdb::config::SharedWriteBufferManager;
 use mz_rocksdb::{
@@ -417,5 +419,49 @@ async fn shared_write_buffer_manager() -> Result<(), anyhow::Error> {
 async fn destroy() -> Result<(), anyhow::Error> {
     let t = tempfile::tempdir()?;
     DB::destroy(&Default::default(), t.path())?;
+    Ok(())
+}
+
+// --
+#[mz_ore::test(tokio::test)]
+#[cfg_attr(miri, ignore)] // unsupported operation: can't call foreign function `rocksdb_create_default_env` on OS `linux`
+async fn restarts() -> Result<(), anyhow::Error> {
+    // If the test aborts, this may not be cleaned up.
+    let t = tempfile::tempdir()?;
+
+    for _runs in 0..10 {
+        let mut instance = RocksDBInstance::<String, String>::new(
+            t.path(),
+            InstanceOptions::<bincode::DefaultOptions, String, StubMergeOperator<String>>::new(
+                rocksdb::Env::mem_env()?,
+                2,
+                None,
+                bincode::DefaultOptions::new(),
+            ),
+            RocksDBConfig::new(Default::default(), None),
+            shared_metrics_for_tests()?,
+            instance_metrics_for_tests()?,
+        )?;
+
+        // write a bunch of data
+        for _ in 0..1_000 {
+            let data: Vec<_> = (0..1_000)
+                .map(|i| {
+                    (
+                        format!("key-{i}"),
+                        KeyUpdate::Put(format!("value-{i}")),
+                        None,
+                    )
+                })
+                .collect();
+            instance.multi_update(data).await?;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        drop(instance);
+    }
+
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
     Ok(())
 }
