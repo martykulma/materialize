@@ -879,6 +879,7 @@ where
             | DataSource::Webhook
             | DataSource::Table
             | DataSource::Progress
+            | DataSource::SourceMetadata { .. }
             | DataSource::Other => (),
             DataSource::IngestionExport {
                 ingestion_id,
@@ -1842,6 +1843,7 @@ where
                         | DataSource::Webhook
                         | DataSource::Ingestion(_)
                         | DataSource::Progress
+                        | DataSource::SourceMetadata { .. }
                         | DataSource::Other => {}
                         DataSource::Sink { .. } => {}
                         DataSource::Table => {
@@ -2005,10 +2007,12 @@ where
                             let c = self_collections.get(ingestion_id).expect("known to exist");
                             c.time_dependence.clone()
                         }
-                        // Introspection, other, progress, table, and webhook sources follow wall clock.
-                        Introspection(_) | Progress | Table { .. } | Webhook { .. } => {
-                            Some(TimeDependence::default())
-                        }
+                        // Introspection, other, progress, source metadata, table, and webhook sources follow wall clock.
+                        Introspection(_)
+                        | Progress
+                        | SourceMetadata { .. }
+                        | Table { .. }
+                        | Webhook { .. } => Some(TimeDependence::default()),
                         // Materialized views, continual tasks, etc, aren't managed by storage.
                         Other => None,
                         Sink { .. } => None,
@@ -2062,7 +2066,7 @@ where
                     }
                     self_collections.insert(id, collection_state);
                 }
-                DataSource::Progress | DataSource::Other => {
+                DataSource::Progress | DataSource::SourceMetadata { .. } | DataSource::Other => {
                     self_collections.insert(id, collection_state);
                 }
                 DataSource::Ingestion(_) => {

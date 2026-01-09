@@ -1085,7 +1085,7 @@ where
                     );
                     table_registers.push((id, write));
                 }
-                DataSource::Progress | DataSource::Other => {
+                DataSource::Progress | DataSource::SourceMetadata { .. } | DataSource::Other => {
                     debug!(
                         ?data_source, meta = ?metadata,
                         "not registering {id} with a controller persist worker",
@@ -1211,6 +1211,7 @@ where
                 | DataSource::Webhook
                 | DataSource::Table
                 | DataSource::Progress
+                | DataSource::SourceMetadata { .. }
                 | DataSource::Other => {}
                 DataSource::Sink { .. } => {
                     if !self.read_only {
@@ -1869,7 +1870,10 @@ where
                         ingestions_to_drop.insert(*id);
                         source_statistics_to_drop.push(*id);
                     }
-                    DataSource::Progress | DataSource::Table | DataSource::Other => {
+                    DataSource::Progress
+                    | DataSource::SourceMetadata { .. }
+                    | DataSource::Table
+                    | DataSource::Other => {
                         collections_to_drop.push(*id);
                     }
                     DataSource::Introspection(_) | DataSource::Sink { .. } => {
@@ -2905,7 +2909,10 @@ where
                     &ingestion.hold_policy,
                 ),
                 CollectionStateExtra::None => {
-                    if matches!(collection.data_source, DataSource::Progress) {
+                    if matches!(
+                        collection.data_source,
+                        DataSource::Progress | DataSource::SourceMetadata { .. }
+                    ) {
                         // We do get these, but can't do anything with it!
                     } else {
                         tracing::error!(
@@ -3306,6 +3313,7 @@ where
             | DataSource::Webhook
             | DataSource::Table
             | DataSource::Progress
+            | DataSource::SourceMetadata { .. }
             | DataSource::Other => (),
             DataSource::IngestionExport { ingestion_id, .. } => {
                 // Ingestion exports depend on their primary source's remap
@@ -3418,6 +3426,12 @@ where
 
         let remap_collection = self.collection(ingestion_description.remap_collection_id)?;
 
+        let metadata_collection_metadata = ingestion_description
+            .metadata_collection_id
+            .map(|id| self.collection(id))
+            .transpose()?
+            .map(|c| c.collection_metadata.clone());
+
         let description = IngestionDescription::<CollectionMetadata> {
             source_exports,
             remap_metadata: remap_collection.collection_metadata.clone(),
@@ -3425,6 +3439,9 @@ where
             desc: ingestion_description.desc.clone(),
             instance_id: ingestion_description.instance_id,
             remap_collection_id: ingestion_description.remap_collection_id,
+            metadata_collection_id: ingestion_description.metadata_collection_id,
+            metadata_collection_metadata,
+            metadata_schema: ingestion_description.metadata_schema.clone(),
         };
 
         let storage_instance_id = description.instance_id;
