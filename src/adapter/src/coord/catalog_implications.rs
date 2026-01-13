@@ -53,7 +53,9 @@ use mz_storage_client::controller::{CollectionDescription, DataSource};
 use mz_storage_types::connections::PostgresConnection;
 use mz_storage_types::connections::inline::{InlinedConnection, IntoInlineConnection};
 use mz_storage_types::sinks::StorageSinkConnection;
-use mz_storage_types::sources::{GenericSourceConnection, SourceExport, SourceExportDataConfig};
+use mz_storage_types::sources::{
+    GenericSourceConnection, SourceExport, SourceExportDataConfig, SourceMetadataSchema,
+};
 use tracing::{Instrument, info_span, warn};
 
 use crate::active_compute_sink::ActiveComputeSinkRetireReason;
@@ -1214,21 +1216,45 @@ impl Coordinator {
         compaction_windows: BTreeMap<CompactionWindow, BTreeSet<CatalogItemId>>,
     ) -> Result<(), AdapterError> {
         let data_source = match source.data_source {
-            DataSourceDesc::Ingestion { desc, cluster_id } => {
+            DataSourceDesc::Ingestion {
+                desc,
+                cluster_id,
+                metadata_subsource,
+            } => {
                 let desc = desc.into_inline_connection(self.catalog().state());
                 let item_global_id = self.catalog().get_entry(&item_id).latest_global_id();
 
-                let ingestion = mz_storage_types::sources::IngestionDescription::new(
-                    desc,
+                let mut ingestion = mz_storage_types::sources::IngestionDescription::new(
+                    desc.clone(),
                     cluster_id,
                     item_global_id,
                 );
+
+                // Set metadata collection fields if a metadata subsource is configured
+                if let Some(metadata_subsource_id) = metadata_subsource {
+                    let metadata_global_id = self
+                        .catalog()
+                        .get_entry(&metadata_subsource_id)
+                        .latest_global_id();
+                    ingestion.metadata_collection_id = Some(metadata_global_id);
+
+                    // Determine the metadata schema based on the source connection type
+                    let metadata_schema = match &desc.connection {
+                        GenericSourceConnection::Postgres(_) => {
+                            Some(SourceMetadataSchema::PostgresTimelineHistory)
+                        }
+                        // Other source types don't have metadata schemas yet
+                        _ => None,
+                    };
+                    ingestion.metadata_schema = metadata_schema;
+                }
 
                 DataSource::Ingestion(ingestion)
             }
             DataSourceDesc::OldSyntaxIngestion {
                 desc,
                 progress_subsource,
+                metadata_subsource,
                 data_config,
                 details,
                 cluster_id,
@@ -1244,10 +1270,29 @@ impl Coordinator {
                     .latest_global_id();
 
                 let mut ingestion = mz_storage_types::sources::IngestionDescription::new(
-                    desc,
+                    desc.clone(),
                     cluster_id,
                     progress_subsource,
                 );
+
+                // Set metadata collection fields if a metadata subsource is configured
+                if let Some(metadata_subsource_id) = metadata_subsource {
+                    let metadata_global_id = self
+                        .catalog()
+                        .get_entry(&metadata_subsource_id)
+                        .latest_global_id();
+                    ingestion.metadata_collection_id = Some(metadata_global_id);
+
+                    // Determine the metadata schema based on the source connection type
+                    let metadata_schema = match &desc.connection {
+                        GenericSourceConnection::Postgres(_) => {
+                            Some(SourceMetadataSchema::PostgresTimelineHistory)
+                        }
+                        // Other source types don't have metadata schemas yet
+                        _ => None,
+                    };
+                    ingestion.metadata_schema = metadata_schema;
+                }
 
                 let legacy_export = SourceExport {
                     storage_metadata: (),

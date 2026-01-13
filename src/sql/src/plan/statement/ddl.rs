@@ -768,6 +768,7 @@ pub fn plan_create_source(
         with_options,
         external_references: referenced_subsources,
         progress_subsource,
+        metadata_subsource,
     } = &stmt;
 
     mz_ore::soft_assert_or_log!(
@@ -940,12 +941,24 @@ pub fn plan_create_source(
                 | GenericSourceConnection::SqlServer(_) => SourceExportDetails::None,
             };
 
+            // Extract metadata subsource ID if present
+            let metadata_subsource_id = match metadata_subsource {
+                Some(DeferredItemName::Named(ResolvedItemName::Item { id, .. })) => Some(*id),
+                Some(_) => {
+                    sql_bail!(
+                        "[internal error] metadata subsource must be named during purification"
+                    );
+                }
+                None => None,
+            };
+
             let data_source = DataSourceDesc::OldSyntaxIngestion {
                 desc: SourceDesc {
                     connection: external_connection,
                     timestamp_interval,
                 },
                 progress_subsource: *id,
+                metadata_subsource: metadata_subsource_id,
                 data_config: SourceExportDataConfig {
                     encoding,
                     envelope: envelope.clone(),
@@ -956,10 +969,25 @@ pub fn plan_create_source(
         }
         None => {
             let desc = external_connection.timestamp_desc();
-            let data_source = DataSourceDesc::Ingestion(SourceDesc {
-                connection: external_connection,
-                timestamp_interval,
-            });
+
+            // Extract metadata subsource ID if present (for new syntax sources)
+            let metadata_subsource_id = match metadata_subsource {
+                Some(DeferredItemName::Named(ResolvedItemName::Item { id, .. })) => Some(*id),
+                Some(_) => {
+                    sql_bail!(
+                        "[internal error] metadata subsource must be named during purification"
+                    );
+                }
+                None => None,
+            };
+
+            let data_source = DataSourceDesc::Ingestion {
+                desc: SourceDesc {
+                    connection: external_connection,
+                    timestamp_interval,
+                },
+                metadata_subsource: metadata_subsource_id,
+            };
             (desc, data_source)
         }
     };

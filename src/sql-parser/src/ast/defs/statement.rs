@@ -1018,6 +1018,8 @@ pub struct CreateSourceStatement<T: AstInfo> {
     pub with_options: Vec<CreateSourceOption<T>>,
     pub external_references: Option<ExternalReferences>,
     pub progress_subsource: Option<DeferredItemName<T>>,
+    /// Optional metadata subsource for source-specific persistent state (e.g., timeline history)
+    pub metadata_subsource: Option<DeferredItemName<T>>,
 }
 
 impl<T: AstInfo> AstDisplay for CreateSourceStatement<T> {

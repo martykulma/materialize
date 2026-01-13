@@ -954,6 +954,8 @@ pub enum DataSourceDesc {
     Ingestion {
         desc: SourceDesc<ReferencedConnection>,
         cluster_id: ClusterId,
+        // Optional metadata subsource for source-specific persistent state (e.g., timeline history)
+        metadata_subsource: Option<CatalogItemId>,
     },
     /// Receives data from an external system
     OldSyntaxIngestion {
@@ -962,6 +964,8 @@ pub enum DataSourceDesc {
         // If we're dealing with an old syntax ingestion the progress id will be some other collection
         // and the ingestion itself will have the data from an external reference
         progress_subsource: CatalogItemId,
+        // Optional metadata subsource for source-specific persistent state (e.g., timeline history)
+        metadata_subsource: Option<CatalogItemId>,
         data_config: SourceExportDataConfig<ReferencedConnection>,
         details: SourceExportDetails,
     },
@@ -1111,15 +1115,20 @@ impl Source {
         Source {
             create_sql: Some(plan.source.create_sql),
             data_source: match plan.source.data_source {
-                mz_sql::plan::DataSourceDesc::Ingestion(desc) => DataSourceDesc::Ingestion {
+                mz_sql::plan::DataSourceDesc::Ingestion {
+                    desc,
+                    metadata_subsource,
+                } => DataSourceDesc::Ingestion {
                     desc,
                     cluster_id: plan
                         .in_cluster
                         .expect("ingestion-based sources must be given a cluster ID"),
+                    metadata_subsource,
                 },
                 mz_sql::plan::DataSourceDesc::OldSyntaxIngestion {
                     desc,
                     progress_subsource,
+                    metadata_subsource,
                     data_config,
                     details,
                 } => DataSourceDesc::OldSyntaxIngestion {
@@ -1128,6 +1137,7 @@ impl Source {
                         .in_cluster
                         .expect("ingestion-based sources must be given a cluster ID"),
                     progress_subsource,
+                    metadata_subsource,
                     data_config,
                     details,
                 },

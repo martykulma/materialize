@@ -1185,7 +1185,10 @@ impl CatalogState {
             }) => CatalogItem::Source(Source {
                 create_sql: Some(source.create_sql),
                 data_source: match source.data_source {
-                    mz_sql::plan::DataSourceDesc::Ingestion(desc) => DataSourceDesc::Ingestion {
+                    mz_sql::plan::DataSourceDesc::Ingestion {
+                        desc,
+                        metadata_subsource,
+                    } => DataSourceDesc::Ingestion {
                         desc,
                         cluster_id: match in_cluster {
                             Some(id) => id,
@@ -1198,15 +1201,18 @@ impl CatalogState {
                                 ));
                             }
                         },
+                        metadata_subsource,
                     },
                     mz_sql::plan::DataSourceDesc::OldSyntaxIngestion {
                         desc,
                         progress_subsource,
+                        metadata_subsource,
                         data_config,
                         details,
                     } => DataSourceDesc::OldSyntaxIngestion {
                         desc,
                         progress_subsource,
+                        metadata_subsource,
                         data_config,
                         details,
                         cluster_id: match in_cluster {

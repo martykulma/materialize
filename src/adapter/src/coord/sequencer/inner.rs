@@ -295,7 +295,7 @@ impl Coordinator {
             let name = plan.name.clone();
 
             match plan.source.data_source {
-                plan::DataSourceDesc::Ingestion(ref desc)
+                plan::DataSourceDesc::Ingestion { ref desc, .. }
                 | plan::DataSourceDesc::OldSyntaxIngestion { ref desc, .. } => {
                     let cluster_id = plan
                         .in_cluster
@@ -506,18 +506,19 @@ impl Coordinator {
     }
 
     /// Prepares a `CREATE SOURCE` statement to create its progress subsource,
-    /// the primary source, and any ingestion export subsources (e.g. PG
-    /// tables).
+    /// metadata subsource, the primary source, and any ingestion export
+    /// subsources (e.g. PG tables).
     pub(crate) async fn plan_purified_create_source(
         &mut self,
         ctx: &ExecuteContext,
         params: Params,
         progress_stmt: Option<CreateSubsourceStatement<Aug>>,
+        metadata_stmt: Option<CreateSubsourceStatement<Aug>>,
         mut source_stmt: mz_sql::ast::CreateSourceStatement<Aug>,
         subsources: BTreeMap<UnresolvedItemName, PurifiedSourceExport>,
         available_source_references: plan::SourceReferences,
     ) -> Result<(Plan, ResolvedIds), AdapterError> {
-        let mut create_source_plans = Vec::with_capacity(subsources.len() + 2);
+        let mut create_source_plans = Vec::with_capacity(subsources.len() + 3);
 
         // 1. First plan the progress subsource, if any.
         if let Some(progress_stmt) = progress_stmt {
@@ -546,6 +547,31 @@ impl Coordinator {
             source_stmt.progress_subsource = Some(DeferredItemName::Named(progress_subsource));
         }
 
+        // 2. Plan the metadata subsource, if any (e.g., for PostgreSQL timeline history).
+        if let Some(metadata_stmt) = metadata_stmt {
+            // The primary source depends on this subsource because it needs
+            // the shard ID for storing metadata.
+            assert_none!(metadata_stmt.of_source);
+            let id_ts = self.get_catalog_write_ts().await;
+            let (item_id, global_id) = self.catalog().allocate_user_id(id_ts).await?;
+            let metadata_plan =
+                self.plan_subsource(ctx.session(), &params, metadata_stmt, item_id, global_id)?;
+            let metadata_full_name = self
+                .catalog()
+                .resolve_full_name(&metadata_plan.plan.name, None);
+            let metadata_subsource = ResolvedItemName::Item {
+                id: metadata_plan.item_id,
+                qualifiers: metadata_plan.plan.name.qualifiers.clone(),
+                full_name: metadata_full_name,
+                print_id: true,
+                version: RelationVersionSelector::Latest,
+            };
+
+            create_source_plans.push(metadata_plan);
+
+            source_stmt.metadata_subsource = Some(DeferredItemName::Named(metadata_subsource));
+        }
+
         let catalog = self.catalog().for_session(ctx.session());
         let resolved_ids = mz_sql::names::visit_dependencies(&catalog, &source_stmt);
 
@@ -561,7 +587,7 @@ impl Coordinator {
             })
             .collect();
 
-        // 2. Then plan the main source.
+        // 3. Then plan the main source.
         let source_plan = match self.plan_statement(
             ctx.session(),
             Statement::CreateSource(source_stmt),

@@ -81,21 +81,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use differential_dataflow::AsCollection;
 use futures::{FutureExt, Stream as AsyncStream, StreamExt, TryStreamExt};
-use mz_dyncfg::ConfigSet;
 use mz_ore::cast::CastFrom;
 use mz_ore::collections::CollectionExt;
 use mz_ore::future::InTask;
 use mz_persist_client::Diagnostics;
-use mz_persist_client::read::ReadHandle;
-use mz_persist_client::write::WriteHandle;
-use mz_persist_types::ShardId;
 use mz_persist_types::codec_impls::UnitSchema;
 use mz_postgres_util::PostgresError;
 use mz_postgres_util::replication::MzPgTimelineHistory;
 use mz_postgres_util::replication::MzPgTimelineHistoryEntry;
 use mz_postgres_util::{Client, simple_query_opt};
-use mz_repr::RelationDesc;
-use mz_repr::SqlScalarType;
 use mz_repr::Timestamp;
 use mz_repr::{Datum, DatumVec, Diff, Row};
 use mz_sql_parser::ast::{Ident, display::AstDisplay};
@@ -167,52 +161,52 @@ pub(crate) fn render<G: Scope<Timestamp = MzOffset>>(
 ) {
     let op_name = format!("ReplicationReader({})", config.id);
 
-    let timeline_relation_desc = RelationDesc::builder()
-        .with_column("timeline_id", SqlScalarType::UInt64.nullable(false))
-        .with_column("switchpoint_lsn", SqlScalarType::UInt64.nullable(true))
-        .finish();
+    // let timeline_relation_desc = RelationDesc::builder()
+    //     .with_column("timeline_id", SqlScalarType::UInt64.nullable(false))
+    //     .with_column("switchpoint_lsn", SqlScalarType::UInt64.nullable(true))
+    //     .finish();
 
-    let timeline_handles_fn = {
-        let cfg = config.clone();
-        let persist = cfg.persist_clients;
-        let relation_desc = timeline_relation_desc.clone();
-        let shard_meta = cfg
-            .source_exports
-            .first_key_value()
-            .unwrap()
-            .1
-            .storage_metadata
-            .clone();
-        let uuid = shard_meta.data_shard.to_string();
-        let uuid = uuid.strip_prefix('s').unwrap();
-        let uuid = Uuid::parse_str(uuid).expect("valid shard_id").as_u128();
-        let uuid = match uuid.checked_add(1) {
-            Some(inc_uuid) => inc_uuid,
-            None => uuid - 1,
-        };
-        let uuid = Uuid::from_u128(uuid);
-        let timeline_history_shard_id =
-            ShardId::from_str(&format!("s{}", uuid)).expect("timeline shard_id");
-        async move {
-            let client = persist.open(shard_meta.persist_location.clone()).await?;
-            let handles = client
-                .open::<SourceData, (), mz_repr::Timestamp, StorageDiff>(
-                    timeline_history_shard_id,
-                    Arc::new(relation_desc),
-                    Arc::new(UnitSchema),
-                    Diagnostics::from_purpose("timeline_history"),
-                    false,
-                )
-                .await?;
-            Ok::<
-                (
-                    WriteHandle<SourceData, (), mz_repr::Timestamp, i64>,
-                    ReadHandle<SourceData, (), mz_repr::Timestamp, i64>,
-                ),
-                anyhow::Error,
-            >(handles)
-        }
-    };
+    // let timeline_handles_fn = {
+    //     let cfg = config.clone();
+    //     let persist = cfg.persist_clients;
+    //     let relation_desc = timeline_relation_desc.clone();
+    //     let shard_meta = cfg
+    //         .source_exports
+    //         .first_key_value()
+    //         .unwrap()
+    //         .1
+    //         .storage_metadata
+    //         .clone();
+    //     let uuid = shard_meta.data_shard.to_string();
+    //     let uuid = uuid.strip_prefix('s').unwrap();
+    //     let uuid = Uuid::parse_str(uuid).expect("valid shard_id").as_u128();
+    //     let uuid = match uuid.checked_add(1) {
+    //         Some(inc_uuid) => inc_uuid,
+    //         None => uuid - 1,
+    //     };
+    //     let uuid = Uuid::from_u128(uuid);
+    //     let timeline_history_shard_id =
+    //         ShardId::from_str(&format!("s{}", uuid)).expect("timeline shard_id");
+    //     async move {
+    //         let client = persist.open(shard_meta.persist_location.clone()).await?;
+    //         let handles = client
+    //             .open::<SourceData, (), mz_repr::Timestamp, StorageDiff>(
+    //                 timeline_history_shard_id,
+    //                 Arc::new(relation_desc),
+    //                 Arc::new(UnitSchema),
+    //                 Diagnostics::from_purpose("timeline_history"),
+    //                 false,
+    //             )
+    //             .await?;
+    //         Ok::<
+    //             (
+    //                 WriteHandle<SourceData, (), mz_repr::Timestamp, i64>,
+    //                 ReadHandle<SourceData, (), mz_repr::Timestamp, i64>,
+    //             ),
+    //             anyhow::Error,
+    //         >(handles)
+    //     }
+    // };
 
     let mut builder = AsyncOperatorBuilder::new(op_name, scope.clone());
 
@@ -437,7 +431,6 @@ pub(crate) fn render<G: Scope<Timestamp = MzOffset>>(
                 committed_uppers.as_mut(),
                 &probe_output,
                 &probe_cap[0],
-                timeline_handles_fn,
             )
             .await?;
 
@@ -679,15 +672,6 @@ async fn raw_stream<'a>(
     uppers: impl futures::Stream<Item = Antichain<MzOffset>> + 'a,
     probe_output: &'a AsyncOutputHandle<MzOffset, CapacityContainerBuilder<Vec<Probe<MzOffset>>>>,
     probe_cap: &'a Capability<MzOffset>,
-    timeline_handles_fn: impl Future<
-        Output = Result<
-            (
-                WriteHandle<SourceData, (), mz_repr::Timestamp, i64>,
-                ReadHandle<SourceData, (), mz_repr::Timestamp, i64>,
-            ),
-            anyhow::Error,
-        >,
-    >,
 ) -> Result<
     Result<
         impl AsyncStream<Item = Result<ReplicationMessage<LogicalReplicationMessage>, TransientError>>
@@ -708,9 +692,8 @@ async fn raw_stream<'a>(
         if let Err(err) = ensure_replication_timeline_id(
             &replication_client,
             expected_timeline_id,
-            config.config.config_set(),
             &resume_lsn,
-            timeline_handles_fn,
+            &config,
         )
         .await?
         {
@@ -1148,24 +1131,41 @@ async fn ensure_publication_exists(
 async fn ensure_replication_timeline_id(
     replication_client: &Client,
     _expected_timeline_id: &u64,
-    _config_set: &ConfigSet,
     resume_lsn: &MzOffset,
-    timeline_handles_fn: impl Future<
-        Output = Result<
-            (
-                WriteHandle<SourceData, (), mz_repr::Timestamp, i64>,
-                ReadHandle<SourceData, (), mz_repr::Timestamp, i64>,
-            ),
-            anyhow::Error,
-        >,
-    >,
+    config: &RawSourceCreationConfig,
 ) -> Result<Result<(), DefiniteError>, TransientError> {
     let timeline_id = mz_postgres_util::get_timeline_id(replication_client).await?;
     tracing::info!("upstream timeline = {timeline_id}");
 
     // TODO (maz): we need to always write out the timeline history. Should controller write it out
     // when the source is created? For now, if there's not history, we assume we need to write it out.
-    let (mut write_handle, mut read_handle) = timeline_handles_fn.await?;
+    // let (mut write_handle, mut read_handle) = timeline_handles_fn.await?;
+    let persist = Arc::clone(&config.persist_clients);
+    let shard_metadata = config
+        .metadata_collection_metadata
+        .as_ref()
+        .expect("metadata shard metadata");
+    let client = persist
+        .open(shard_metadata.persist_location.clone())
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to acquire persist client: {}", e))?;
+    let (mut write_handle, mut read_handle) = client
+        .open::<SourceData, (), mz_repr::Timestamp, StorageDiff>(
+            shard_metadata.data_shard.clone(),
+            Arc::new(shard_metadata.relation_desc.clone()),
+            Arc::new(UnitSchema),
+            Diagnostics::from_purpose("timeline_history"),
+            false,
+        )
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "failed to open metadata shard {}: {}",
+                shard_metadata.data_shard,
+                e
+            )
+        })?;
+
     let upper_ts = write_handle
         .fetch_recent_upper()
         .await

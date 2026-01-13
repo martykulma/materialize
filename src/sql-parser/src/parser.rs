@@ -3004,6 +3004,8 @@ impl<'a> Parser<'a> {
             key_constraint,
             external_references: referenced_subsources,
             progress_subsource,
+            // Metadata subsources are created automatically for sources that need them
+            metadata_subsource: None,
             with_options,
         }))
     }

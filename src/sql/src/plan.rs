@@ -1496,13 +1496,19 @@ pub struct Source {
 #[derive(Debug, Clone)]
 pub enum DataSourceDesc {
     /// Receives data from an external system.
-    Ingestion(SourceDesc<ReferencedConnection>),
+    Ingestion {
+        desc: SourceDesc<ReferencedConnection>,
+        // Optional metadata subsource for source-specific persistent state (e.g., timeline history)
+        metadata_subsource: Option<CatalogItemId>,
+    },
     /// Receives data from an external system.
     OldSyntaxIngestion {
         desc: SourceDesc<ReferencedConnection>,
         // If we're dealing with an old syntax ingestion the progress id will be some other collection
         // and the ingestion itself will have the data from a default external reference
         progress_subsource: CatalogItemId,
+        // Optional metadata subsource for source-specific persistent state (e.g., timeline history)
+        metadata_subsource: Option<CatalogItemId>,
         data_config: SourceExportDataConfig<ReferencedConnection>,
         details: SourceExportDetails,
     },
