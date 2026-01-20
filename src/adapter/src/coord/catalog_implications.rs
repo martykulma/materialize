@@ -1230,6 +1230,11 @@ impl Coordinator {
                     item_global_id,
                 );
 
+                tracing::info!(
+                    "===== handle create source: metadata_subsource={:#?}",
+                    metadata_subsource
+                );
+
                 // Set metadata collection fields if a metadata subsource is configured
                 if let Some(metadata_subsource_id) = metadata_subsource {
                     let metadata_global_id = self
@@ -1323,6 +1328,7 @@ impl Coordinator {
                 }
             }
             DataSourceDesc::Progress => DataSource::Progress,
+            DataSourceDesc::Metadata => DataSource::Metadata,
             DataSourceDesc::Webhook { .. } => DataSource::Webhook,
             DataSourceDesc::Introspection(_) => {
                 unreachable!("cannot create sources with introspection data sources")
@@ -1595,6 +1601,8 @@ impl CatalogImplication {
                     self.absorb_table(table, Some(parsed_full_name), catalog_update.diff)
                 }
                 CatalogItem::Source(source) => {
+                    // TODO: this source is missing the metadata subsource!!
+                    tracing::info!("==== absorb source: {source:#?}");
                     self.absorb_source(
                         (source, connection),
                         Some(parsed_full_name),

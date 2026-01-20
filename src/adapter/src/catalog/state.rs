@@ -1239,6 +1239,7 @@ impl CatalogState {
                         data_config,
                     },
                     mz_sql::plan::DataSourceDesc::Progress => DataSourceDesc::Progress,
+                    mz_sql::plan::DataSourceDesc::Metadata => DataSourceDesc::Metadata,
                     mz_sql::plan::DataSourceDesc::Webhook {
                         validate_using,
                         body_format,
@@ -2605,7 +2606,8 @@ impl CatalogState {
                         }
                         DataSourceDesc::Introspection(_)
                         | DataSourceDesc::Progress
-                        | DataSourceDesc::Webhook { .. } => {
+                        | DataSourceDesc::Webhook { .. }
+                        | DataSourceDesc::Metadata => {
                             cws.entry(source_cw).or_default().insert(item_id);
                         }
                     }

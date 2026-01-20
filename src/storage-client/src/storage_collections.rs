@@ -53,6 +53,7 @@ use mz_storage_types::time_dependence::{TimeDependence, TimeDependenceError};
 use mz_txn_wal::metrics::Metrics as TxnMetrics;
 use mz_txn_wal::txn_read::{DataSnapshot, TxnsRead};
 use mz_txn_wal::txns::TxnsHandle;
+use rdkafka::metadata::Metadata;
 use timely::PartialOrder;
 use timely::order::TotalOrder;
 use timely::progress::frontier::MutableAntichain;
@@ -880,7 +881,8 @@ where
             | DataSource::Table
             | DataSource::Progress
             | DataSource::SourceMetadata { .. }
-            | DataSource::Other => (),
+            | DataSource::Other
+            | DataSource::Metadata => (),
             DataSource::IngestionExport {
                 ingestion_id,
                 data_config,
@@ -897,13 +899,23 @@ where
 
                 match data_config.envelope {
                     SourceEnvelope::CdcV2 => (),
-                    _ => dependencies.push(*remap_collection_id),
+                    _ => {
+                        dependencies.push(*remap_collection_id);
+                        if let Some(metadata_collection_id) =
+                            &source.ingestion_metadata_collection_id
+                        {
+                            dependencies.push(*metadata_collection_id);
+                        }
+                    }
                 }
             }
             // Ingestions depend on their remap collection.
             DataSource::Ingestion(ingestion) => {
                 if ingestion.remap_collection_id != source_id {
                     dependencies.push(ingestion.remap_collection_id);
+                }
+                if let Some(metadata_collection_id) = ingestion.metadata_collection_id{
+                    dependencies.push(metadata_collection_id);
                 }
             }
             DataSource::Sink { desc } => dependencies.push(desc.sink.from),
@@ -1844,7 +1856,8 @@ where
                         | DataSource::Ingestion(_)
                         | DataSource::Progress
                         | DataSource::SourceMetadata { .. }
-                        | DataSource::Other => {}
+                        | DataSource::Other
+                        | DataSource::Metadata => {}
                         DataSource::Sink { .. } => {}
                         DataSource::Table => {
                             let register_ts = register_ts.expect(
@@ -2016,14 +2029,19 @@ where
                         // Materialized views, continual tasks, etc, aren't managed by storage.
                         Other => None,
                         Sink { .. } => None,
+                        // TODO(maz) - for prototype, assume not managed by storage
+                        Metadata => None,
                     }
                 }
             };
 
-            let ingestion_remap_collection_id = match &description.data_source {
-                DataSource::Ingestion(desc) => Some(desc.remap_collection_id),
-                _ => None,
-            };
+            let (ingestion_remap_collection_id, ingestion_metadata_collection_id) =
+                match &description.data_source {
+                    DataSource::Ingestion(desc) => {
+                        (Some(desc.remap_collection_id), desc.metadata_collection_id)
+                    }
+                    _ => (None, None),
+                };
 
             let mut collection_state = CollectionState::new(
                 description.primary,
@@ -2033,6 +2051,7 @@ where
                 write_frontier.clone(),
                 storage_dependencies,
                 metadata.clone(),
+                ingestion_metadata_collection_id,
             );
 
             // Install the collection state in the appropriate spot.
@@ -2066,7 +2085,10 @@ where
                     }
                     self_collections.insert(id, collection_state);
                 }
-                DataSource::Progress | DataSource::SourceMetadata { .. } | DataSource::Other => {
+                DataSource::Progress
+                | DataSource::SourceMetadata { .. }
+                | DataSource::Other
+                | DataSource::Metadata => {
                     self_collections.insert(id, collection_state);
                 }
                 DataSource::Ingestion(_) => {
@@ -2222,6 +2244,7 @@ where
                 write_frontier,
                 Vec::new(),
                 collection_meta,
+                existing.ingestion_metadata_collection_id.clone(),
             );
 
             // Add a record of the new collection.
@@ -2564,6 +2587,9 @@ struct CollectionState<T> {
     /// The ID of the source remap/progress collection, if this is an ingestion.
     ingestion_remap_collection_id: Option<GlobalId>,
 
+    /// The ID of the source metadata collection, if this is an ingestion that needs such a thing.
+    ingestion_metadata_collection_id: Option<GlobalId>,
+
     /// Accumulation of read capabilities for the collection.
     ///
     /// This accumulation will always contain `self.implied_capability`, but may
@@ -2599,6 +2625,7 @@ impl<T: TimelyTimestamp> CollectionState<T> {
         write_frontier: Antichain<T>,
         storage_dependencies: Vec<GlobalId>,
         metadata: CollectionMetadata,
+        ingestion_metadata_collection_id: Option<GlobalId>,
     ) -> Self {
         let mut read_capabilities = MutableAntichain::new();
         read_capabilities.update_iter(since.iter().map(|time| (time.clone(), 1)));
@@ -2614,6 +2641,7 @@ impl<T: TimelyTimestamp> CollectionState<T> {
             storage_dependencies,
             write_frontier,
             collection_metadata: metadata,
+            ingestion_metadata_collection_id,
         }
     }
 

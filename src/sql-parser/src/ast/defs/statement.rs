@@ -1145,6 +1145,8 @@ pub enum CreateSubsourceOptionName {
     /// `DETAILS` for this subsource, hex-encoded protobuf type
     /// `mz_storage_types::sources::SourceExportStatementDetails`
     Details,
+    /// An internal metadata subsource, similar to progress but much more fun
+    Metadata,
 }
 
 impl AstDisplay for CreateSubsourceOptionName {
@@ -1156,7 +1158,8 @@ impl AstDisplay for CreateSubsourceOptionName {
             CreateSubsourceOptionName::TextColumns => "TEXT COLUMNS",
             CreateSubsourceOptionName::ExcludeColumns => "EXCLUDE COLUMNS",
             CreateSubsourceOptionName::Details => "DETAILS",
-        })
+            CreateSubsourceOptionName::Metadata => "METADATA",
+                    })
     }
 }
 
@@ -1173,7 +1176,8 @@ impl WithOptionName for CreateSubsourceOptionName {
             | CreateSubsourceOptionName::RetainHistory
             | CreateSubsourceOptionName::Details
             | CreateSubsourceOptionName::TextColumns
-            | CreateSubsourceOptionName::ExcludeColumns => false,
+            | CreateSubsourceOptionName::ExcludeColumns
+            | CreateSubsourceOptionName::Metadata => false,
         }
     }
 }

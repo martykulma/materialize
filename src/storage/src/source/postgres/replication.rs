@@ -1137,6 +1137,8 @@ async fn ensure_replication_timeline_id(
     let timeline_id = mz_postgres_util::get_timeline_id(replication_client).await?;
     tracing::info!("upstream timeline = {timeline_id}");
 
+    tracing::info!(?config.metadata_collection_id, ?config.metadata_collection_metadata, "metadata info");
+
     // TODO (maz): we need to always write out the timeline history. Should controller write it out
     // when the source is created? For now, if there's not history, we assume we need to write it out.
     // let (mut write_handle, mut read_handle) = timeline_handles_fn.await?;

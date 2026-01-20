@@ -1530,6 +1530,8 @@ pub enum DataSourceDesc {
         /// Only `Some` when created via `CREATE TABLE ... FROM WEBHOOK`.
         cluster_id: Option<StorageInstanceId>,
     },
+    /// Receives dynamic state data from the source
+    Metadata,
 }
 
 #[derive(Clone, Debug, Serialize)]

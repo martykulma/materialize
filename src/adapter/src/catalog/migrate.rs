@@ -750,6 +750,9 @@ fn rewrite_sources_to_tables(
                             CreateSubsourceOptionName::ExternalReference => {
                                 unreachable!("This option is handled separately above.")
                             }
+                            CreateSubsourceOptionName::Metadata => {
+                                panic!("metadata option should not exist on this subsource")
+                            }
                         }
                     })
                     .collect::<Vec<_>>();

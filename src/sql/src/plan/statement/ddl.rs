@@ -1603,7 +1603,8 @@ generate_extracted_config!(
     (RetainHistory, OptionalDuration),
     (TextColumns, Vec::<Ident>, Default(vec![])),
     (ExcludeColumns, Vec::<Ident>, Default(vec![])),
-    (Details, String)
+    (Details, String),
+    (Metadata, bool, Default(false))
 );
 
 pub fn plan_create_subsource(
@@ -1626,6 +1627,7 @@ pub fn plan_create_subsource(
         text_columns,
         exclude_columns,
         details,
+        metadata,
         seen: _,
     } = with_options.clone().try_into()?;
 
@@ -1634,8 +1636,8 @@ pub fn plan_create_subsource(
     // statements, so this would fire in integration testing if we failed to
     // uphold it.
     assert!(
-        progress ^ (external_reference.is_some() && of_source.is_some()),
-        "CREATE SUBSOURCE statement must specify either PROGRESS or REFERENCES option"
+        progress ^ (external_reference.is_some() && of_source.is_some()) ^ metadata,
+        "CREATE SUBSOURCE statement must specify either PROGRESS, METADATA, or REFERENCES option"
     );
 
     let desc = plan_source_export_desc(scx, name, columns, constraints)?;
@@ -1725,6 +1727,8 @@ pub fn plan_create_subsource(
         }
     } else if progress {
         DataSourceDesc::Progress
+    } else if metadata {
+        DataSourceDesc::Metadata
     } else {
         panic!("subsources must specify one of `external_reference`, `progress`, or `references`")
     };

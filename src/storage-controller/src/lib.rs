@@ -763,6 +763,10 @@ where
         mut collections: Vec<(GlobalId, CollectionDescription<Self::Timestamp>)>,
         migrated_storage_collections: &BTreeSet<GlobalId>,
     ) -> Result<(), StorageError<Self::Timestamp>> {
+        tracing::info!(
+            "==== bootstrap collection storage-controller: collections={:#?}",
+            collections
+        );
         self.migrated_storage_collections
             .extend(migrated_storage_collections.iter().cloned());
 
@@ -1085,16 +1089,19 @@ where
                     );
                     table_registers.push((id, write));
                 }
-                DataSource::Progress | DataSource::SourceMetadata { .. } | DataSource::Other => {
+                DataSource::Progress
+                | DataSource::SourceMetadata { .. }
+                | DataSource::Other
+                | DataSource::Metadata => {
                     debug!(
                         ?data_source, meta = ?metadata,
                         "not registering {id} with a controller persist worker",
                     );
                 }
                 DataSource::Ingestion(ingestion_desc) => {
-                    debug!(
-                        ?data_source, meta = ?metadata,
-                        "not registering {id} with a controller persist worker",
+                    info!(
+                        "==== not registering {id} with a controller persist worker data_source={:#?} meta={:#?}",
+                        data_source, metadata
                     );
 
                     let mut dependency_since = Antichain::from_elem(T::minimum());
@@ -1212,7 +1219,8 @@ where
                 | DataSource::Table
                 | DataSource::Progress
                 | DataSource::SourceMetadata { .. }
-                | DataSource::Other => {}
+                | DataSource::Other
+                | DataSource::Metadata => {}
                 DataSource::Sink { .. } => {
                     if !self.read_only {
                         self.run_export(id)?;
@@ -1873,7 +1881,8 @@ where
                     DataSource::Progress
                     | DataSource::SourceMetadata { .. }
                     | DataSource::Table
-                    | DataSource::Other => {
+                    | DataSource::Other
+                    | DataSource::Metadata => {
                         collections_to_drop.push(*id);
                     }
                     DataSource::Introspection(_) | DataSource::Sink { .. } => {
@@ -3314,17 +3323,22 @@ where
             | DataSource::Table
             | DataSource::Progress
             | DataSource::SourceMetadata { .. }
-            | DataSource::Other => (),
+            | DataSource::Other
+            | DataSource::Metadata => (),
             DataSource::IngestionExport { ingestion_id, .. } => {
                 // Ingestion exports depend on their primary source's remap
-                // collection.
+                // and metadata collections.
                 let source_collection = self.collection(*ingestion_id)?;
-                let ingestion_remap_collection_id = match &source_collection.data_source {
-                    DataSource::Ingestion(ingestion) => ingestion.remap_collection_id,
-                    _ => unreachable!(
-                        "SourceExport must only refer to primary sources that already exist"
-                    ),
-                };
+                let (ingestion_remap_collection_id, ingestion_metadata_collection_id) =
+                    match &source_collection.data_source {
+                        DataSource::Ingestion(ingestion) => (
+                            ingestion.remap_collection_id,
+                            ingestion.metadata_collection_id,
+                        ),
+                        _ => unreachable!(
+                            "SourceExport must only refer to primary sources that already exist"
+                        ),
+                    };
 
                 // Ingestion exports (aka. subsources) must make sure that 1)
                 // their own collection's since stays one step behind the upper,
@@ -3332,6 +3346,10 @@ where
                 // their upper. Hence they track themselves and the remap shard
                 // as dependencies.
                 dependencies.extend([self_id, ingestion_remap_collection_id]);
+
+                if let Some(metadata_collection_id) = ingestion_metadata_collection_id {
+                    dependencies.push(metadata_collection_id);
+                }
             }
             // Ingestions depend on their remap collection.
             DataSource::Ingestion(ingestion) => {
@@ -3342,6 +3360,9 @@ where
                 dependencies.push(self_id);
                 if self_id != ingestion.remap_collection_id {
                     dependencies.push(ingestion.remap_collection_id);
+                }
+                if let Some(metadata_id) = ingestion.metadata_collection_id {
+                    dependencies.push(metadata_id);
                 }
             }
             DataSource::Sink { desc } => {
@@ -3409,6 +3430,8 @@ where
                 Err(StorageError::IdentifierInvalid(id))?
             }
         };
+
+        tracing::info!("ingestion_description: {:#?}", ingestion_description);
 
         // Enrich all of the exports with their metadata
         let mut source_exports = BTreeMap::new();

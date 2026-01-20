@@ -997,6 +997,8 @@ pub enum DataSourceDesc {
         /// The cluster which this source is associated with.
         cluster_id: ClusterId,
     },
+    /// Receives dynamic state data from the source.
+    Metadata,
 }
 
 impl DataSourceDesc {
@@ -1022,7 +1024,8 @@ impl DataSourceDesc {
             },
             DataSourceDesc::Introspection(_)
             | DataSourceDesc::Webhook { .. }
-            | DataSourceDesc::Progress => (None, None),
+            | DataSourceDesc::Progress
+            | DataSourceDesc::Metadata => (None, None),
         }
     }
 
@@ -1069,7 +1072,8 @@ impl DataSourceDesc {
             }
             DataSourceDesc::Introspection(_)
             | DataSourceDesc::Webhook { .. }
-            | DataSourceDesc::Progress => None,
+            | DataSourceDesc::Progress
+            | DataSourceDesc::Metadata => None,
         }
     }
 }
@@ -1148,6 +1152,13 @@ impl Source {
                     );
                     DataSourceDesc::Progress
                 }
+                mz_sql::plan::DataSourceDesc::Metadata => {
+                    assert!(
+                        plan.in_cluster.is_none(),
+                        "subsources must not have a host config or cluster_id defined"
+                    );
+                    DataSourceDesc::Metadata
+                }
                 mz_sql::plan::DataSourceDesc::IngestionExport {
                     ingestion_id,
                     external_reference,
@@ -1206,6 +1217,7 @@ impl Source {
             DataSourceDesc::IngestionExport { .. } => "subsource",
             DataSourceDesc::Introspection(_) => "source",
             DataSourceDesc::Webhook { .. } => "webhook",
+            DataSourceDesc::Metadata => "metadata",
         }
     }
 
@@ -1217,7 +1229,8 @@ impl Source {
             DataSourceDesc::IngestionExport { .. }
             | DataSourceDesc::Introspection(_)
             | DataSourceDesc::Webhook { .. }
-            | DataSourceDesc::Progress => None,
+            | DataSourceDesc::Progress
+            | DataSourceDesc::Metadata => None,
         }
     }
 
@@ -1261,9 +1274,11 @@ impl Source {
             //  use a data shard.
             DataSourceDesc::IngestionExport { .. } => 1,
             DataSourceDesc::Webhook { .. } => 1,
-            // Introspection and progress subsources are not under the user's control, so shouldn't
+            // Introspection, progress, and metadata subsources are not under the user's control, so shouldn't
             // count toward their quota.
-            DataSourceDesc::Introspection(_) | DataSourceDesc::Progress => 0,
+            DataSourceDesc::Introspection(_)
+            | DataSourceDesc::Progress
+            | DataSourceDesc::Metadata => 0,
         }
     }
 }
@@ -1834,7 +1849,8 @@ impl CatalogItem {
                 DataSourceDesc::IngestionExport { .. }
                 | DataSourceDesc::Introspection(_)
                 | DataSourceDesc::Webhook { .. }
-                | DataSourceDesc::Progress => Ok(None),
+                | DataSourceDesc::Progress
+                | DataSourceDesc::Metadata => Ok(None),
             },
             _ => Err(SqlCatalogError::UnexpectedType {
                 name: entry.name().item.to_string(),
@@ -2341,7 +2357,9 @@ impl CatalogItem {
                 // cross-referencing the items
                 DataSourceDesc::IngestionExport { .. } => None,
                 DataSourceDesc::Webhook { cluster_id, .. } => Some(*cluster_id),
-                DataSourceDesc::Introspection(_) | DataSourceDesc::Progress => None,
+                DataSourceDesc::Introspection(_)
+                | DataSourceDesc::Progress
+                | DataSourceDesc::Metadata => None,
             },
             CatalogItem::Sink(sink) => Some(sink.cluster_id),
             CatalogItem::ContinualTask(ct) => Some(ct.cluster_id),
@@ -2755,7 +2773,8 @@ impl CatalogEntry {
                 DataSourceDesc::IngestionExport { .. }
                 | DataSourceDesc::Introspection(_)
                 | DataSourceDesc::Progress
-                | DataSourceDesc::Webhook { .. } => None,
+                | DataSourceDesc::Webhook { .. }
+                | DataSourceDesc::Metadata => None,
             },
             CatalogItem::Table(_)
             | CatalogItem::Log(_)

@@ -2762,6 +2762,11 @@ impl Coordinator {
                     let mut ingestion =
                         IngestionDescription::new(desc.clone(), cluster_id, object_id);
 
+                    tracing::info!(
+                        "==== bootstrap controller ingestion: metadata_subsource={:#?}",
+                        metadata_subsource
+                    );
+
                     // Set metadata collection fields if a metadata subsource is configured
                     if let Some(metadata_subsource_id) = metadata_subsource {
                         let metadata_global_id =
@@ -2778,6 +2783,10 @@ impl Coordinator {
                         };
                         ingestion.metadata_schema = metadata_schema;
                     }
+                    tracing::info!(
+                        "==== bootstrap controller ingestion: ingeestion={:#?}",
+                        ingestion
+                    );
 
                     DataSource::Ingestion(ingestion)
                 }
@@ -2797,6 +2806,11 @@ impl Coordinator {
                         catalog.get_entry(&progress_subsource).latest_global_id();
                     let mut ingestion =
                         IngestionDescription::new(desc.clone(), cluster_id, progress_subsource);
+
+                    tracing::info!(
+                        "==== bootstrap controller old ingestion: metadata_subsource={:#?}",
+                        metadata_subsource
+                    );
 
                     // Set metadata collection fields if a metadata subsource is configured
                     if let Some(metadata_subsource_id) = metadata_subsource {
@@ -2821,6 +2835,10 @@ impl Coordinator {
                         details,
                     };
                     ingestion.source_exports.insert(object_id, legacy_export);
+                    tracing::info!(
+                        "==== bootstrap controller old ingestion: ingeestion={:#?}",
+                        ingestion
+                    );
 
                     DataSource::Ingestion(ingestion)
                 }
@@ -2842,6 +2860,7 @@ impl Coordinator {
                 }
                 DataSourceDesc::Webhook { .. } => DataSource::Webhook,
                 DataSourceDesc::Progress => DataSource::Progress,
+                DataSourceDesc::Metadata => DataSource::Metadata,
                 DataSourceDesc::Introspection(introspection) => {
                     DataSource::Introspection(introspection)
                 }

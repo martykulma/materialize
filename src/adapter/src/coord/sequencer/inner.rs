@@ -335,7 +335,9 @@ impl Coordinator {
                         }
                     }
                 }
-                plan::DataSourceDesc::IngestionExport { .. } | plan::DataSourceDesc::Progress => {}
+                plan::DataSourceDesc::IngestionExport { .. }
+                | plan::DataSourceDesc::Progress
+                | plan::DataSourceDesc::Metadata => {}
             }
 
             // Attempt to reduce the `CHECK` expression, we timeout if this takes too long.
@@ -364,8 +366,8 @@ impl Coordinator {
                     references: references.clone().into(),
                 });
             }
-
             let source = Source::new(plan, global_id, resolved_ids, None, false);
+
             ops.push(catalog::Op::CreateItem {
                 id: item_id,
                 name,
@@ -549,6 +551,7 @@ impl Coordinator {
 
         // 2. Plan the metadata subsource, if any (e.g., for PostgreSQL timeline history).
         if let Some(metadata_stmt) = metadata_stmt {
+            tracing::info!("plan metadata_stmt stmt={:#?}", &metadata_stmt,);
             // The primary source depends on this subsource because it needs
             // the shard ID for storing metadata.
             assert_none!(metadata_stmt.of_source);
@@ -559,6 +562,11 @@ impl Coordinator {
             let metadata_full_name = self
                 .catalog()
                 .resolve_full_name(&metadata_plan.plan.name, None);
+            tracing::info!(
+                "plan metadata_stmt plan={:#?} full_name={:#?}",
+                &metadata_plan,
+                &metadata_full_name
+            );
             let metadata_subsource = ResolvedItemName::Item {
                 id: metadata_plan.item_id,
                 qualifiers: metadata_plan.plan.name.qualifiers.clone(),

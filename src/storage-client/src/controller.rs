@@ -134,6 +134,8 @@ pub enum DataSource<T> {
     Other,
     /// This collection is the output collection of a sink.
     Sink { desc: ExportDescription<T> },
+    /// Dynamic state data that comes from the source.
+    Metadata,
 }
 
 /// Describes a request to create a source.
@@ -743,7 +745,8 @@ impl<T> DataSource<T> {
             | DataSource::Introspection(_)
             | DataSource::Progress
             | DataSource::SourceMetadata { .. }
-            | DataSource::Webhook => false,
+            | DataSource::Webhook
+            | DataSource::Metadata => false,
             DataSource::Sink { .. } => false,
         }
     }

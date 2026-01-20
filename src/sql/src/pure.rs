@@ -683,7 +683,7 @@ async fn purify_create_source(
         include_metadata,
         external_references,
         progress_subsource,
-        metadata_subsource,
+        metadata_subsource, // TODO(maz)- decision is made by this guy
         with_options,
         ..
     } = &mut create_source_stmt;
@@ -1286,25 +1286,37 @@ async fn purify_create_source(
     // Generate metadata subsource for PostgreSQL sources (for timeline history tracking)
     let create_metadata_subsource_stmt =
         if matches!(source_connection, CreateSourceConnection::Postgres { .. }) {
-            // Generate a name for the metadata subsource
-            let (item, prefix) = source_name.0.split_last().unwrap();
-            let item_name = Ident::try_generate_name(item.to_string(), "_metadata", |candidate| {
-                let mut suggested_name = prefix.to_vec();
-                suggested_name.push(candidate.clone());
+            tracing::info!(?metadata_subsource, "create_metadata_subsource_stmt");
+            let name = match metadata_subsource {
+                Some(name) => match name {
+                    DeferredItemName::Deferred(name) => name.clone(),
+                    DeferredItemName::Named(_) => unreachable!("already checked for this value"),
+                },
+                None => {
+                    let (item, prefix) = source_name.0.split_last().unwrap();
+                    let item_name =
+                        Ident::try_generate_name(item.to_string(), "_metadata", |candidate| {
+                            let mut suggested_name = prefix.to_vec();
+                            suggested_name.push(candidate.clone());
 
-                let partial = normalize::unresolved_item_name(UnresolvedItemName(suggested_name))?;
-                let qualified = scx.allocate_qualified_name(partial)?;
-                let item_exists = scx.catalog.get_item_by_name(&qualified).is_some();
-                let type_exists = scx.catalog.get_type_by_name(&qualified).is_some();
-                Ok::<_, PlanError>(!item_exists && !type_exists)
-            })?;
+                            let partial = normalize::unresolved_item_name(UnresolvedItemName(
+                                suggested_name,
+                            ))?;
+                            let qualified = scx.allocate_qualified_name(partial)?;
+                            let item_exists = scx.catalog.get_item_by_name(&qualified).is_some();
+                            let type_exists = scx.catalog.get_type_by_name(&qualified).is_some();
+                            Ok::<_, PlanError>(!item_exists && !type_exists)
+                        })?;
 
-            let mut full_name = prefix.to_vec();
-            full_name.push(item_name);
-            let full_name = normalize::unresolved_item_name(UnresolvedItemName(full_name))?;
-            let qualified_name = scx.allocate_qualified_name(full_name)?;
-            let full_name = scx.catalog.resolve_full_name(&qualified_name);
-            let name = UnresolvedItemName::from(full_name.clone());
+                    let mut full_name = prefix.to_vec();
+                    full_name.push(item_name);
+                    let full_name = normalize::unresolved_item_name(UnresolvedItemName(full_name))?;
+                    let qualified_name = scx.allocate_qualified_name(full_name)?;
+                    let full_name = scx.catalog.resolve_full_name(&qualified_name);
+
+                    UnresolvedItemName::from(full_name.clone())
+                }
+            };
 
             let (columns, constraints) = scx.relation_desc_into_table_defs(
                 &mz_storage_types::sources::postgres::PG_TIMELINE_HISTORY_DESC,
@@ -1321,9 +1333,10 @@ async fn purify_create_source(
                     }),
                 })
                 .collect();
+
             // Mark this as a metadata subsource (similar to progress subsource)
             metadata_with_options.push(CreateSubsourceOption {
-                name: CreateSubsourceOptionName::Progress,
+                name: CreateSubsourceOptionName::Metadata,
                 value: Some(WithOptionValue::Value(Value::Boolean(true))),
             });
 
