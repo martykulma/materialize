@@ -1072,6 +1072,11 @@ impl<T: AstInfo> AstDisplay for CreateSourceStatement<T> {
             f.write_node(progress);
         }
 
+        if let Some(metadata) = &self.metadata_subsource {
+            f.write_str(" EXPOSE METADATA AS ");
+            f.write_node(metadata);
+        }
+
         if !self.with_options.is_empty() {
             f.write_str(" WITH (");
             f.write_node(&display::comma_separated(&self.with_options));

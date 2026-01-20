@@ -118,7 +118,6 @@ use tokio::sync::{mpsc, watch};
 use tokio_postgres::error::SqlState;
 use tokio_postgres::types::PgLsn;
 use tracing::{error, trace};
-use uuid::Uuid;
 
 use crate::metrics::source::postgres::PgSourceMetrics;
 use crate::source::RawSourceCreationConfig;

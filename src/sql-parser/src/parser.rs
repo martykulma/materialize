@@ -2986,6 +2986,12 @@ impl<'a> Parser<'a> {
             None
         };
 
+        let metadata_subsource = if self.parse_keywords(&[EXPOSE, METADATA, AS]) {
+            Some(self.parse_deferred_item_name()?)
+        } else {
+            None
+        };
+
         // New WITH block
         let with_options = if self.parse_keyword(WITH) {
             self.expect_token(&Token::LParen)?;
@@ -3008,8 +3014,7 @@ impl<'a> Parser<'a> {
             key_constraint,
             external_references: referenced_subsources,
             progress_subsource,
-            // Metadata subsources are created automatically for sources that need them
-            metadata_subsource: None,
+            metadata_subsource,
             with_options,
         }))
     }

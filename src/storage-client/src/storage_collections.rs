@@ -53,7 +53,6 @@ use mz_storage_types::time_dependence::{TimeDependence, TimeDependenceError};
 use mz_txn_wal::metrics::Metrics as TxnMetrics;
 use mz_txn_wal::txn_read::{DataSnapshot, TxnsRead};
 use mz_txn_wal::txns::TxnsHandle;
-use rdkafka::metadata::Metadata;
 use timely::PartialOrder;
 use timely::order::TotalOrder;
 use timely::progress::frontier::MutableAntichain;
@@ -914,7 +913,7 @@ where
                 if ingestion.remap_collection_id != source_id {
                     dependencies.push(ingestion.remap_collection_id);
                 }
-                if let Some(metadata_collection_id) = ingestion.metadata_collection_id{
+                if let Some(metadata_collection_id) = ingestion.metadata_collection_id {
                     dependencies.push(metadata_collection_id);
                 }
             }
@@ -1929,6 +1928,20 @@ where
             let write_frontier = write_handle.upper();
             let data_shard_since = since_handle.since().clone();
 
+            let metadata_collection_id = match description.data_source {
+                DataSource::Ingestion(ref desc) => desc.metadata_collection_id,
+                DataSource::IngestionExport {
+                    ref ingestion_id, ..
+                } => {
+                    let source = self_collections
+                        .get(ingestion_id)
+                        .ok_or(StorageError::IdentifierMissing(*ingestion_id))?;
+
+                    source.ingestion_metadata_collection_id
+                }
+                _ => None,
+            };
+
             // Determine if this collection has any dependencies.
             let storage_dependencies =
                 Self::determine_collection_dependencies(&*self_collections, id, &description)?;
@@ -1936,6 +1949,7 @@ where
             // Determine the initial since of the collection.
             let initial_since = match storage_dependencies
                 .iter()
+                .filter(|&dep| metadata_collection_id.is_none_or(|mci| mci != *dep))
                 .at_most_one()
                 .expect("should have at most one dependency")
             {
