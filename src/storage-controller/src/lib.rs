@@ -1834,8 +1834,11 @@ where
                         collections_to_drop.push(*id);
                         source_statistics_to_drop.push(*id);
                     }
-                    DataSource::Ingestion(_) => {
+                    DataSource::Ingestion(ref desc) => {
                         ingestions_to_drop.insert(*id);
+                        if let Some(metadata_collection) = desc.metadata_collection_id {
+                            ingestions_to_drop.insert(metadata_collection);
+                        } 
                         source_statistics_to_drop.push(*id);
                     }
                     DataSource::IngestionExport { ingestion_id, .. } => {
