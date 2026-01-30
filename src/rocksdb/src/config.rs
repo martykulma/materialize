@@ -54,6 +54,7 @@ pub struct RocksDBConfig {
     pub stats_persist_interval_seconds: u32,
     pub point_lookup_block_cache_size_mb: Option<u32>,
     pub shrink_buffers_by_ratio: usize,
+    pub block_size: usize,
     pub dynamic: RocksDBDynamicConfig,
 
     /// Write buffer manager configs
@@ -98,6 +99,7 @@ impl RocksDBConfig {
             write_buffer_manager_memory_bytes,
             write_buffer_manager_memory_fraction,
             write_buffer_manager_allow_stall,
+            block_size,
         } = params;
 
         Self {
@@ -113,6 +115,7 @@ impl RocksDBConfig {
             stats_persist_interval_seconds,
             point_lookup_block_cache_size_mb,
             shrink_buffers_by_ratio,
+            block_size,
             dynamic: RocksDBDynamicConfig {
                 batch_size: Arc::new(AtomicUsize::new(batch_size)),
             },
@@ -146,6 +149,7 @@ impl RocksDBConfig {
             write_buffer_manager_memory_bytes,
             write_buffer_manager_memory_fraction,
             write_buffer_manager_allow_stall,
+            block_size,
         } = params;
 
         self.compaction_style = compaction_style;
@@ -160,6 +164,7 @@ impl RocksDBConfig {
         self.stats_persist_interval_seconds = stats_persist_interval_seconds;
         self.point_lookup_block_cache_size_mb = point_lookup_block_cache_size_mb;
         self.shrink_buffers_by_ratio = shrink_buffers_by_ratio;
+        self.block_size = block_size;
 
         self.write_buffer_manager_config
             .write_buffer_manager_memory_bytes = write_buffer_manager_memory_bytes;
@@ -284,6 +289,7 @@ pub fn apply_to_options(
         stats_persist_interval_seconds,
         point_lookup_block_cache_size_mb,
         shrink_buffers_by_ratio: _,
+        block_size,
         dynamic: _,
         shared_write_buffer_manager,
         write_buffer_manager_config,
@@ -327,9 +333,15 @@ pub fn apply_to_options(
     options.set_stats_dump_period_sec(*stats_log_interval_seconds);
     options.set_stats_persist_period_sec(*stats_persist_interval_seconds);
 
+    // Configure block-based table options including block size
+    let mut block_opts = rocksdb::BlockBasedOptions::default();
+    block_opts.set_block_size(*block_size);
+
     if let Some(block_cache_size_mb) = point_lookup_block_cache_size_mb {
         options.optimize_for_point_lookup((*block_cache_size_mb).into());
     }
+
+    options.set_block_based_table_factory(&block_opts);
 
     let write_buffer_manager = get_write_buffer_manager(write_buffer_manager_config);
     let write_buffer_manager_handle = write_buffer_manager.map(|buf| {

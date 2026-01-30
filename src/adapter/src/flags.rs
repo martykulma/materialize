@@ -85,6 +85,7 @@ pub fn storage_config(config: &SystemVars) -> StorageParameters {
                         Ok(o) => Some(o),
                     }),
                 config.upsert_rocksdb_write_buffer_manager_allow_stall(),
+                config.upsert_rocksdb_block_size(),
             ) {
                 Ok(u) => u,
                 Err(e) => {

@@ -1115,6 +1115,7 @@ impl SystemVars {
             &upsert_rocksdb::UPSERT_ROCKSDB_WRITE_BUFFER_MANAGER_CLUSTER_MEMORY_FRACTION,
             &upsert_rocksdb::UPSERT_ROCKSDB_WRITE_BUFFER_MANAGER_MEMORY_BYTES,
             &upsert_rocksdb::UPSERT_ROCKSDB_WRITE_BUFFER_MANAGER_ALLOW_STALL,
+            &upsert_rocksdb::UPSERT_ROCKSDB_BLOCK_SIZE,
             &STORAGE_DATAFLOW_MAX_INFLIGHT_BYTES,
             &STORAGE_DATAFLOW_MAX_INFLIGHT_BYTES_TO_CLUSTER_SIZE_FRACTION,
             &STORAGE_DATAFLOW_MAX_INFLIGHT_BYTES_DISK_ONLY,
@@ -1720,6 +1721,10 @@ impl SystemVars {
 
     pub fn upsert_rocksdb_write_buffer_manager_allow_stall(&self) -> bool {
         *self.expect_value(&upsert_rocksdb::UPSERT_ROCKSDB_WRITE_BUFFER_MANAGER_ALLOW_STALL)
+    }
+
+    pub fn upsert_rocksdb_block_size(&self) -> usize {
+        *self.expect_value(&upsert_rocksdb::UPSERT_ROCKSDB_BLOCK_SIZE)
     }
 
     pub fn persist_fast_path_limit(&self) -> usize {

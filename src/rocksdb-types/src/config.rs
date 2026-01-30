@@ -146,6 +146,14 @@ pub struct RocksDBTuningParameters {
     pub write_buffer_manager_memory_fraction: Option<f64>,
     /// Config to enable stalls with write buffer manager
     pub write_buffer_manager_allow_stall: bool,
+
+    /// The size of data blocks in RocksDB. Larger blocks mean better compression
+    /// but slower point lookups. Smaller blocks mean faster point lookups but
+    /// worse compression and more memory overhead for the block index.
+    ///
+    /// The default is 32KB, which is larger than RocksDB's default of 4KB,
+    /// optimized for the UPSERT workload which has high write rates.
+    pub block_size: usize,
 }
 
 impl Default for RocksDBTuningParameters {
@@ -169,6 +177,7 @@ impl Default for RocksDBTuningParameters {
             write_buffer_manager_memory_bytes: None,
             write_buffer_manager_memory_fraction: None,
             write_buffer_manager_allow_stall: false,
+            block_size: defaults::DEFAULT_BLOCK_SIZE,
         }
     }
 }
@@ -192,6 +201,7 @@ impl RocksDBTuningParameters {
         write_buffer_manager_memory_bytes: Option<usize>,
         write_buffer_manager_memory_fraction: Option<f64>,
         write_buffer_manager_allow_stall: bool,
+        block_size: usize,
     ) -> Result<Self, anyhow::Error> {
         Ok(Self {
             compaction_style,
@@ -228,6 +238,7 @@ impl RocksDBTuningParameters {
             write_buffer_manager_memory_bytes,
             write_buffer_manager_memory_fraction,
             write_buffer_manager_allow_stall,
+            block_size,
         })
     }
 }
@@ -361,6 +372,9 @@ pub mod defaults {
 
     /// Not allowing stalls for write buffer manager. Only applicable if write buffer manager is enabled by other flags.
     pub const DEFAULT_WRITE_BUFFER_MANAGER_ALLOW_STALL: bool = false;
+
+    /// Default block size of 4KB, matching RocksDB's default.
+    pub const DEFAULT_BLOCK_SIZE: usize = 4 * 1024;
 }
 
 #[cfg(test)]
@@ -386,6 +400,7 @@ mod tests {
             None,
             None,
             defaults::DEFAULT_WRITE_BUFFER_MANAGER_ALLOW_STALL,
+            defaults::DEFAULT_BLOCK_SIZE,
         )
         .unwrap();
 

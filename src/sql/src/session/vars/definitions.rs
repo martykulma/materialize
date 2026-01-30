@@ -852,6 +852,16 @@ pub mod upsert_rocksdb {
         Only takes effect on source restart (Materialize).",
         false,
     );
+
+    pub static UPSERT_ROCKSDB_BLOCK_SIZE: VarDefinition = VarDefinition::new(
+        "upsert_rocksdb_block_size",
+        value!(usize; mz_rocksdb_types::defaults::DEFAULT_BLOCK_SIZE),
+        "Tuning parameter for RocksDB as used in `UPSERT/DEBEZIUM` \
+        sources. Sets the size of data blocks in bytes. Larger blocks improve \
+        compression but slow point lookups. Default is 4KB. \
+        Only takes effect on source restart (Materialize).",
+        false,
+    );
 }
 
 pub static LOGGING_FILTER: VarDefinition = VarDefinition::new_lazy(
