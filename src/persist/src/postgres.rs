@@ -390,6 +390,8 @@ impl Consensus for PostgresConsensus {
                                  new.seqno, expected)).into());
             }
         }
+        let pid = std::process::id();
+        let ex_seq: i64 = expected.map(|sn| sn.0.try_into().unwrap()).unwrap_or(-1);
 
         let result = if let Some(expected) = expected {
             /// This query has been written to execute within a single
@@ -438,7 +440,8 @@ impl Consensus for PostgresConsensus {
                     &statement,
                     &[&key, &new.seqno, &new.data.as_ref(), &expected],
                 )
-                .await?
+                .await
+                .inspect_err(|error| tracing::info!(pid, key, ex_seq, ?error, "CAS ERROR"))?
         } else {
             // Insert the new row as long as no other row exists for the same shard.
             let q = "INSERT INTO consensus SELECT $1, $2, $3 WHERE
@@ -454,8 +457,10 @@ impl Consensus for PostgresConsensus {
         };
 
         if result == 1 {
+            tracing::info!(pid, key, ex_seq, "CAS COMMIT");
             Ok(CaSResult::Committed)
         } else {
+            tracing::info!(pid, key, ex_seq, "CAS MISMATCH");
             Ok(CaSResult::ExpectationMismatch)
         }
     }
@@ -466,6 +471,7 @@ impl Consensus for PostgresConsensus {
         from: SeqNo,
         limit: usize,
     ) -> Result<Vec<VersionedData>, ExternalError> {
+        let pid = std::process::id();
         let q = "SELECT sequence_number, data FROM consensus
              WHERE shard = $1 AND sequence_number >= $2
              ORDER BY sequence_number ASC LIMIT $3";
@@ -475,10 +481,17 @@ impl Consensus for PostgresConsensus {
                 limit
             )));
         };
+        let from_seq = from.0;
         let rows = {
             let client = self.get_connection().await?;
             let statement = client.prepare_cached(q).await?;
-            client.query(&statement, &[&key, &from, &limit]).await?
+            client
+                .query(&statement, &[&key, &from, &limit])
+                .await
+                .inspect(|_| tracing::info!(pid, key, from_seq, limit, "SCAN COMMIT"))
+                .inspect_err(|error| {
+                    tracing::info!(pid, key, from_seq, limit, ?error, "SCAN ERROR")
+                })?
         };
         let mut results = Vec::with_capacity(rows.len());
 
@@ -501,6 +514,8 @@ impl Consensus for PostgresConsensus {
             SELECT * FROM consensus WHERE shard = $1 AND sequence_number >= $2
         )
         ";
+
+        let pid = std::process::id();
 
         /// This query has been specifically tuned to ensure we get the minimal
         /// number of __row__ locks possible, and that it doesn't conflict with
@@ -542,12 +557,17 @@ impl Consensus for PostgresConsensus {
         } else {
             CRDB_TRUNCATE_QUERY
         };
+        let from_seq = seqno.0;
         let result = {
             let client = self.get_connection().await?;
             let statement = client.prepare_cached(q).await?;
-            client.execute(&statement, &[&key, &seqno]).await?
+            client
+                .execute(&statement, &[&key, &seqno])
+                .await
+                .inspect_err(|error| tracing::info!(pid, key, from_seq, ?error, "TRUNCATE ERROR"))?
         };
         if result == 0 {
+            tracing::info!(pid, key, from_seq, "TRUNCATE NOROWS");
             // We weren't able to successfully truncate any rows inspect head to
             // determine whether the request was valid and there were no records in
             // the provided range, or the request was invalid because it would have
@@ -566,6 +586,8 @@ impl Consensus for PostgresConsensus {
                     seqno
                 )));
             }
+        } else {
+            tracing::info!(pid, key, from_seq, "TRUNCATE COMMIT");
         }
 
         Ok(Some(usize::cast_from(result)))
