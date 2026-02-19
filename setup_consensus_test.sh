@@ -11,8 +11,8 @@
 
 
 pg_image=postgres:18
-sources=4
-tables_per_source=50
+sources=1
+tables_per_source=900
 total=$(($sources * $tables_per_source))
 
 pg_src_container_name="consensus-pg-src"
@@ -53,7 +53,7 @@ gen_pg_sql() {
 
     for i in $(seq 1 $total) ; do
         echo "CREATE TABLE foo_$i (id int, data text, ts timestamp without time zone);"
-        echo "INSERT INTO foo_$i VALUES (1, 'this is data for table $i', now());"
+        echo "INSERT INTO foo_$i SELECT i, sha512(i::text::bytea)::text FROM generate_series(1,1000) AS i;"
         echo "ALTER TABLE foo_$i REPLICA IDENTITY FULL;"
     done
 
