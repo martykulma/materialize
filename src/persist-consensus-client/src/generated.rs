@@ -7,6 +7,9 @@
 // the Business Source License, use of this software will be governed
 // by the Apache License, Version 2.0.
 
-pub mod raft {
-    include!(concat!(env!("OUT_DIR"), "/mz_persist_consensus.raft.rs"));
+pub mod service {
+    include!(concat!(
+        env!("OUT_DIR"),
+        "/mz_persist_consensus_client.service.rs"
+    ));
 }

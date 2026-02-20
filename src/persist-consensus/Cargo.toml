@@ -23,6 +23,7 @@ futures = "0.3.31"
 futures-util = "0.3"
 mz-ore = { path = "../ore", default-features = false, features = ["bytes", "process", "panic", "tracing"] }
 mz-persist = { path = "../persist" }
+mz-persist-consensus-client = { path = "../persist-consensus-client" }
 num_cpus = "1.17.0"
 openraft = { version = "0.9", features = ["serde"] }
 prost = { version = "0.14.3", features = ["no-recursion-limit"] }

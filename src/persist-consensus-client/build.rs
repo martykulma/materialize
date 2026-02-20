@@ -19,7 +19,7 @@ fn main() {
         .emit_rerun_if_changed(false)
         .compile_with_config(
             config,
-            &[PathBuf::from("persist-consensus/src/raft.proto")],
+            &[PathBuf::from("persist-consensus-client/src/service.proto")],
             &[PathBuf::from(".."), mz_build_tools::protoc_include()],
         )
         .unwrap_or_else(|e| panic!("{e}"))

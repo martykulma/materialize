@@ -9,7 +9,7 @@
 
 syntax = "proto3";
 
-package mz_persist_consensus.service;
+package mz_persist_consensus_client.service;
 
 service PersistConsensusService {
     rpc Head(HeadRequest) returns (HeadResponse);

@@ -16,9 +16,7 @@
 //! - **External API** (`PersistConsensusService`): gRPC service for `head`, `compare_and_set`,
 //!   `scan`, `truncate`, and `list_keys` operations.
 //! - **Internal Raft RPCs** (`RaftService`): gRPC service for Raft node-to-node communication.
-//! - **Client** (`GrpcConsensusClient`): Implements the `Consensus` trait over gRPC.
 
-pub mod client;
 pub mod generated;
 pub mod network;
 pub mod node;
@@ -34,7 +32,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::generated::raft::raft_service_server::RaftServiceServer;
-use crate::generated::service::persist_consensus_service_server::PersistConsensusServiceServer;
+use mz_persist_consensus_client::generated::service::persist_consensus_service_server::PersistConsensusServiceServer;
 use crate::node::RaftNode;
 use crate::raft_types::NodeInfo;
 use crate::server::{ConsensusServer, RaftRpcServer};

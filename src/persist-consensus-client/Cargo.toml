@@ -1,0 +1,30 @@
+[package]
+name = "mz-persist-consensus-client"
+description = "gRPC client for the persist-consensus Raft service."
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1.0.101"
+bytes = "1.11.1"
+prost = { version = "0.14.3", features = ["no-recursion-limit"] }
+tokio-stream = "0.1.18"
+tonic = "0.14.2"
+tonic-prost = "0.14.2"
+workspace-hack = { version = "0.0.0", path = "../workspace-hack", optional = true }
+
+[build-dependencies]
+mz-build-tools = { path = "../build-tools", default-features = false, features = ["protobuf-src"] }
+prost-build = "0.14.3"
+tonic-prost-build = "0.14.2"
+
+[features]
+default = ["mz-build-tools/default", "workspace-hack"]
+
+[package.metadata.cargo-udeps.ignore]
+normal = ["workspace-hack"]

@@ -23,8 +23,8 @@ use tonic::{Request, Response, Status};
 
 use crate::generated::raft::raft_service_server::RaftService as RaftServiceTrait;
 use crate::generated::raft::{ProtoRaftRequest, ProtoRaftResponse};
-use crate::generated::service::persist_consensus_service_server::PersistConsensusService;
-use crate::generated::service::{
+use mz_persist_consensus_client::generated::service::persist_consensus_service_server::PersistConsensusService;
+use mz_persist_consensus_client::generated::service::{
     CaSRequest, CaSResponse, HeadRequest, HeadResponse, ListKeysRequest, ListKeysResponse,
     ProtoCaSResult, ProtoVersionedData, ScanRequest, ScanResponse, TruncateRequest,
     TruncateResponse,
