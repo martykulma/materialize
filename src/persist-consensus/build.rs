@@ -1,0 +1,29 @@
+// Copyright Materialize, Inc. and contributors. All rights reserved.
+//
+// Use of this software is governed by the Business Source License
+// included in the LICENSE file.
+//
+// As of the Change Date specified in that file, in accordance with
+// the Business Source License, use of this software will be governed
+// by the Apache License, Version 2.0.
+
+use std::path::PathBuf;
+
+fn main() {
+    let mut config = prost_build::Config::new();
+    config
+        .protoc_executable(mz_build_tools::protoc())
+        .type_attribute(".", "#[allow(missing_docs)]");
+
+    tonic_prost_build::configure()
+        .emit_rerun_if_changed(false)
+        .compile_with_config(
+            config,
+            &[
+                PathBuf::from("persist-consensus/src/service.proto"),
+                PathBuf::from("persist-consensus/src/raft.proto"),
+            ],
+            &[PathBuf::from(".."), mz_build_tools::protoc_include()],
+        )
+        .unwrap_or_else(|e| panic!("{e}"))
+}
