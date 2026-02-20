@@ -25,6 +25,8 @@ use crate::azure::{AzureBlob, AzureBlobConfig};
 use crate::file::{FileBlob, FileBlobConfig};
 #[cfg(feature = "foundationdb")]
 use crate::foundationdb::{FdbConsensus, FdbConsensusConfig};
+#[cfg(feature = "raft")]
+use crate::raft::{RaftConsensus, RaftConsensusConfig};
 use crate::location::{Blob, Consensus, Determinate, ExternalError};
 use crate::mem::{MemBlob, MemBlobConfig, MemConsensus};
 use crate::metrics::S3BlobMetrics;
@@ -229,6 +231,9 @@ pub enum ConsensusConfig {
     FoundationDB(FdbConsensusConfig),
     /// Config for [PostgresConsensus].
     Postgres(PostgresConsensusConfig),
+    #[cfg(feature = "raft")]
+    /// Config for Raft-backed consensus.
+    Raft(RaftConsensusConfig),
     /// Config for [MemConsensus], only available in testing.
     Mem,
     #[cfg(feature = "turmoil")]
@@ -246,6 +251,10 @@ impl ConsensusConfig {
             }
             ConsensusConfig::Postgres(config) => {
                 Ok(Arc::new(PostgresConsensus::open(config).await?))
+            }
+            #[cfg(feature = "raft")]
+            ConsensusConfig::Raft(config) => {
+                Ok(Arc::new(RaftConsensus::open(config).await?))
             }
             ConsensusConfig::Mem => Ok(Arc::new(MemConsensus::default())),
             #[cfg(feature = "turmoil")]
@@ -270,6 +279,8 @@ impl ConsensusConfig {
             "postgres" | "postgresql" => Ok(ConsensusConfig::Postgres(
                 PostgresConsensusConfig::new(url, knobs, metrics, dyncfg)?,
             )),
+            #[cfg(feature = "raft")]
+            "raft" => Ok(ConsensusConfig::Raft(RaftConsensusConfig::new(url))),
             "mem" => {
                 if !cfg!(debug_assertions) {
                     warn!("persist unexpectedly using in-mem consensus in a release binary");

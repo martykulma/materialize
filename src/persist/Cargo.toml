@@ -41,6 +41,7 @@ differential-dataflow = "0.19.1"
 fail = { version = "0.5.1", features = ["failpoints"] }
 futures-util = "0.3.31"
 mz-foundationdb = { path = "../foundationdb", default-features = false, optional = true }
+mz-persist-consensus-client = { path = "../persist-consensus-client", optional = true }
 itertools = "0.14.0"
 md-5 = "0.10.6"
 mz-aws-util = { path = "../aws-util", features = ["s3"] }
@@ -65,6 +66,8 @@ serde_json = { version = "1.0.149", optional = true }
 timely = "0.26.1"
 tokio = { version = "1.48.0", default-features = false, features = ["fs", "macros", "sync", "rt", "rt-multi-thread"] }
 tokio-postgres = { version = "0.7.15" }
+tokio-stream = { version = "0.1.18", optional = true }
+tonic = { version = "0.14.2", optional = true }
 tracing = "0.1.44"
 turmoil = { version = "0.7.0", optional = true }
 url = "2.5.8"
@@ -92,6 +95,7 @@ prost-build = "0.14.3"
 [features]
 default = ["mz-build-tools/default", "workspace-hack"]
 foundationdb = ["mz-foundationdb"]
+raft = ["mz-persist-consensus-client", "tonic", "tokio-stream"]
 turmoil = ["dep:serde_json", "dep:turmoil"]
 
 [package.metadata.cargo-udeps.ignore]

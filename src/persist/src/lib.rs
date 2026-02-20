@@ -23,6 +23,8 @@ pub mod error;
 pub mod file;
 #[cfg(feature = "foundationdb")]
 pub mod foundationdb;
+#[cfg(feature = "raft")]
+pub mod raft;
 pub mod generated;
 pub mod indexed;
 pub mod intercept;
