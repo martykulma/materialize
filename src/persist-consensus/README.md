@@ -11,7 +11,24 @@ A standalone Raft-backed consensus service for Materialize persist, using
 | `mz-persist-consensus-client` | gRPC proto definitions and raw client library |
 | `mz-persist` (feature `raft`) | `Consensus` trait implementation using the client |
 
-## Building
+## Quick start
+
+The fastest way to run Materialize with Raft consensus locally:
+
+```bash
+# Terminal 1: start the persist-consensus server
+cargo run -p mz-persist-consensus -- --node-id 1
+
+# Terminal 2: start environmentd with Raft consensus
+./bin/environmentd --raft
+```
+
+The `bin/environmentd` wrapper with `--raft`:
+- Builds with the `raft` cargo feature enabled
+- Sets `--persist-consensus-url=raft://127.0.0.1:6880`
+- Skips creating the postgres `consensus` schema (tsoracle and storage still use postgres)
+
+## Building manually
 
 ```bash
 # Build the server binary
@@ -21,7 +38,7 @@ cargo build -p mz-persist-consensus
 cargo build -p mz-environmentd --features mz-environmentd/raft
 ```
 
-## Running
+## Running manually
 
 ### 1. Start the persist-consensus server
 

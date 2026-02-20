@@ -150,6 +150,11 @@ def main() -> int:
         action="store_true",
     )
     parser.add_argument(
+        "--raft",
+        help="Build with the raft feature, enabling Raft as a consensus backend",
+        action="store_true",
+    )
+    parser.add_argument(
         "-p",
         "--package",
         help="Package to run tests for",
@@ -261,8 +266,9 @@ def main() -> int:
             _handle_lingering_services(kill=args.reset)
             scratch = MZ_ROOT / "scratch"
             dbconn = _connect_sql(args.postgres)
+            schemas = ["tsoracle", "storage"] if args.raft else ["consensus", "tsoracle", "storage"]
             if dbconn:
-                for schema in ["consensus", "tsoracle", "storage"]:
+                for schema in schemas:
                     if args.reset:
                         _run_sql(dbconn, f"DROP SCHEMA IF EXISTS {schema} CASCADE")
                     _run_sql(dbconn, f"CREATE SCHEMA IF NOT EXISTS {schema}")
@@ -306,7 +312,7 @@ def main() -> int:
                 f"--orchestrator-process-prometheus-service-discovery-directory={MZDATA}/prometheus",
                 f"--orchestrator-process-scratch-directory={scratch}",
                 "--secrets-controller=local-file",
-                f"--persist-consensus-url={args.postgres}?options=--search_path=consensus",
+                f"--persist-consensus-url={'raft://127.0.0.1:6880' if args.raft else args.postgres + '?options=--search_path=consensus'}",
                 f"--persist-blob-url={args.blob}",
                 f"--timestamp-oracle-url={args.postgres}?options=--search_path=tsoracle",
                 f"--environment-id={environment_id}",
@@ -471,6 +477,8 @@ def _cargo_build(
         )
     if args.foundationdb:
         features.append("foundationdb")
+    if args.raft:
+        features.append("raft")
     if args.features:
         features.extend(args.features.split(","))
     if features:
