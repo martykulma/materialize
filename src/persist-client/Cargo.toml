@@ -84,6 +84,7 @@ tonic-prost-build = "0.14.2"
 default = ["mz-build-tools/default", "workspace-hack"]
 turmoil = []
 foundationdb = ["mz-persist/foundationdb"]
+raft = ["mz-persist/raft"]
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["workspace-hack"]

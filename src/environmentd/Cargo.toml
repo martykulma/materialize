@@ -193,6 +193,7 @@ tokio-console = [
     "mz-orchestrator-tracing/tokio-console",
 ]
 foundationdb = ["mz-adapter/foundationdb", "mz-persist-client/foundationdb"]
+raft = ["mz-persist-client/raft"]
 
 [package.metadata.cargo-udeps.ignore]
 # sysctl is only used on macOS.
