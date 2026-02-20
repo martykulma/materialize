@@ -9,14 +9,19 @@
 
 //! Implementation of [Consensus] backed by a Raft-based persist-consensus service.
 
+use std::str::FromStr;
+
 use anyhow::anyhow;
 use async_trait::async_trait;
 use bytes::Bytes;
 use mz_ore::url::SensitiveUrl;
 use tokio_stream::StreamExt;
 
-use crate::location::{
-    CaSResult, Consensus, ExternalError, Indeterminate, ResultStream, SeqNo, VersionedData,
+use crate::{
+    error::Error,
+    location::{
+        CaSResult, Consensus, ExternalError, Indeterminate, ResultStream, SeqNo, VersionedData,
+    },
 };
 
 /// Configuration to connect to a Raft-backed implementation of [Consensus].
@@ -27,9 +32,32 @@ pub struct RaftConsensusConfig {
 }
 
 impl RaftConsensusConfig {
+    const EXTERNAL_TESTS_RAFT_URL: &'static str = "MZ_PERSIST_EXTERNAL_STORAGE_TEST_RAFT_URL";
+
     /// Returns a new [RaftConsensusConfig] from a URL.
     pub fn new(url: &SensitiveUrl) -> Self {
         RaftConsensusConfig { url: url.clone() }
+    }
+
+    /// Returns a new [RaftConsensusConfig] for use in unit tests.
+    ///
+    /// By default, persist tests that use external storage (like Postgres) are
+    /// no-ops so that `cargo test` works on new environments without any
+    /// configuration. To activate the tests for [RaftConsensus] set the
+    /// `MZ_PERSIST_EXTERNAL_STORAGE_TEST_RAFT_URL` environment variable
+    /// with a valid connection uri for raft (`raft://<host>:<port>`).
+    pub fn new_for_test() -> Result<Option<Self>, Error> {
+        let url = match std::env::var(Self::EXTERNAL_TESTS_RAFT_URL) {
+            Ok(url) => SensitiveUrl::from_str(&url).map_err(|e| e.to_string())?,
+            Err(_) => {
+                if mz_ore::env::is_var_truthy("CI") {
+                    panic!("CI is supposed to run this test but something has gone wrong!");
+                }
+                return Ok(None);
+            }
+        };
+        // perfect the way it is, no config needed
+        Ok(Some(RaftConsensusConfig { url }))
     }
 }
 
@@ -62,10 +90,9 @@ impl RaftConsensus {
         if addr.starts_with("raft://") {
             addr = format!("http://{}", &addr["raft://".len()..]);
         }
-        let inner =
-            mz_persist_consensus_client::client::PersistConsensusClient::connect(addr)
-                .await
-                .map_err(|e| ExternalError::from(anyhow!("gRPC connect error: {e}")))?;
+        let inner = mz_persist_consensus_client::client::PersistConsensusClient::connect(addr)
+            .await
+            .map_err(|e| ExternalError::from(anyhow!("gRPC connect error: {e}")))?;
         Ok(RaftConsensus { inner })
     }
 }
@@ -109,9 +136,7 @@ impl Consensus for RaftConsensus {
             .map_err(status_to_external_error)?;
 
         match result {
-            mz_persist_consensus_client::client::CaSResult::Committed => {
-                Ok(CaSResult::Committed)
-            }
+            mz_persist_consensus_client::client::CaSResult::Committed => Ok(CaSResult::Committed),
             mz_persist_consensus_client::client::CaSResult::ExpectationMismatch => {
                 Ok(CaSResult::ExpectationMismatch)
             }
@@ -144,5 +169,77 @@ impl Consensus for RaftConsensus {
             .await
             .map(|opt| opt.map(|d| d as usize))
             .map_err(status_to_external_error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tracing::info;
+    use uuid::Uuid;
+
+    use crate::location::tests::consensus_impl_test;
+
+    use super::*;
+
+    #[mz_ore::test(tokio::test(flavor = "multi_thread"))]
+    #[cfg_attr(miri, ignore)]
+    async fn raft_consesnsus() -> Result<(), ExternalError> {
+        let config = match RaftConsensusConfig::new_for_test()? {
+            Some(config) => config,
+            None => {
+                info!(
+                    "{} env not set: skipping test that uses external service",
+                    RaftConsensusConfig::EXTERNAL_TESTS_RAFT_URL
+                );
+                return Ok(());
+            }
+        };
+
+        consensus_impl_test(|| RaftConsensus::open(config.clone())).await?;
+
+        // and now verify the implementation-specific `drop_and_recreate` works as intended
+        let consensus = RaftConsensus::open(config.clone()).await?;
+        let key = Uuid::new_v4().to_string();
+        let state = VersionedData {
+            seqno: SeqNo(5),
+            data: Bytes::from("abc"),
+        };
+
+        assert_eq!(
+            consensus.compare_and_set(&key, None, state.clone()).await,
+            Ok(CaSResult::Committed),
+        );
+
+        assert_eq!(consensus.head(&key).await, Ok(Some(state.clone())));
+
+        // consensus.drop_and_recreate().await?;
+
+        // assert_eq!(consensus.head(&key).await, Ok(None));
+
+        // // This should be a separate postgres_consensus_blocking test, but nextest makes it
+        // // difficult since we can't specify that both tests touch the consensus table and thus
+        // // interfere with each other.
+        // let config = match RaftConsensusConfig::new_for_test()? {
+        //     Some(config) => config,
+        //     None => {
+        //         info!(
+        //             "{} env not set: skipping test that uses external service",
+        //             RaftConsensusConfig::EXTERNAL_TESTS_RAFT_URL
+        //         );
+        //         return Ok(());
+        //     }
+        // };
+
+        // let consensus: RaftConsensus = RaftConsensus::open(config.clone()).await?;
+        // // Max size in test is 2... let's saturate the pool.
+        // let _conn1 = consensus.get_connection().await?;
+        // let _conn2 = consensus.get_connection().await?;
+
+        // // And finally, we should see the next connect time out.
+        // let conn3 = consensus.get_connection().await;
+
+        // assert_err!(conn3);
+
+        Ok(())
     }
 }
