@@ -23,9 +23,10 @@ pg_src_db=test
 pg_src_pub=mzpub
 
 mz_sql_file="mz_$$.sql"
+mz_sys_sql_file="mz_sys_$$.sql"
 pg_sql_file="pg_$$.sql"
 cleanup() {
-    rm -f "$mz_sql_file" "$pg_sql_file"
+    rm -f "$mz_sql_file" "$pg_sql_file" "$mz_sys_sql_file"
 }
 trap cleanup EXIT
 
@@ -72,7 +73,11 @@ gen_pg_sql > $pg_sql_file
 echo "Generating SQL for Materialize to $mz_sql_file"
 gen_mz_sql > $mz_sql_file
 
-
+cat > $mz_sys_sql_file << _ALTER_SYS
+ALTER SYSTEM SET max_sources=10000;
+ALTER SYSTEM SET max_objects_per_schema=10000;
+ALTER SYSTEM SET max_tables=10000;
+_ALTER_SYS
 
 echo "Stopping $pg_src_container_name if it happens to be running"
 docker stop "$pg_src_container_name" 2>/dev/null
@@ -121,6 +126,16 @@ until docker run --rm $pg_image pg_isready -h host.docker.internal -U materializ
     printf "\r\033[KStill waiting... %d seconds" $SECONDS
     sleep 1
 done
+
+docker run --rm \
+    -v $(pwd):/scripts \
+    -e PGUSER="mz_system" \
+    -e PGPASSWORD="" \
+    -e PGDATABASE="$mz_db" \
+    -e PGPORT="6877" \
+    $pg_image \
+    psql -h host.docker.internal -f /scripts/"$mz_sys_sql_file"
+
 
 echo "creating source in materialize"
 mz_db="materialize"
