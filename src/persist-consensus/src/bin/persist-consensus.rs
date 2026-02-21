@@ -30,8 +30,8 @@ struct Args {
     #[clap(long, default_value = "0.0.0.0:6881", env = "RAFT_LISTEN_ADDR")]
     raft_listen_addr: SocketAddr,
 
-    /// Peer nodes in the format "node_id:raft_addr:api_addr".
-    /// Can be specified multiple times.
+    /// Peer nodes in the format "node_id,raft_addr,api_addr".
+    /// e.g. "2,127.0.0.1:6883,127.0.0.1:6882". Can be specified multiple times.
     #[clap(long)]
     peer: Vec<String>,
 }

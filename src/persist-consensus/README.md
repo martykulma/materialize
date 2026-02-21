@@ -54,7 +54,7 @@ cargo run -p mz-persist-consensus -- \
 | `--node-id` | *(required)* | Unique node identifier within the Raft cluster |
 | `--api-listen-addr` | `0.0.0.0:6880` | External Consensus API (gRPC) |
 | `--raft-listen-addr` | `0.0.0.0:6881` | Internal Raft node-to-node RPCs (gRPC) |
-| `--peer` | *(none)* | Peer node in format `node_id:raft_addr:api_addr` (repeatable) |
+| `--peer` | *(none)* | Peer node in format `node_id,raft_addr,api_addr` (repeatable) |
 
 ### 2. Start environmentd
 
@@ -76,24 +76,24 @@ cargo run -p mz-persist-consensus -- \
   --node-id 1 \
   --api-listen-addr 127.0.0.1:6880 \
   --raft-listen-addr 127.0.0.1:6881 \
-  --peer 2:127.0.0.1:6883:127.0.0.1:6882 \
-  --peer 3:127.0.0.1:6885:127.0.0.1:6884
+  --peer 2,127.0.0.1:6883,127.0.0.1:6882 \
+  --peer 3,127.0.0.1:6885,127.0.0.1:6884
 
 # Node 2
 cargo run -p mz-persist-consensus -- \
   --node-id 2 \
   --api-listen-addr 127.0.0.1:6882 \
   --raft-listen-addr 127.0.0.1:6883 \
-  --peer 1:127.0.0.1:6881:127.0.0.1:6880 \
-  --peer 3:127.0.0.1:6885:127.0.0.1:6884
+  --peer 1,127.0.0.1:6881,127.0.0.1:6880 \
+  --peer 3,127.0.0.1:6885,127.0.0.1:6884
 
 # Node 3
 cargo run -p mz-persist-consensus -- \
   --node-id 3 \
   --api-listen-addr 127.0.0.1:6884 \
   --raft-listen-addr 127.0.0.1:6885 \
-  --peer 1:127.0.0.1:6881:127.0.0.1:6880 \
-  --peer 2:127.0.0.1:6883:127.0.0.1:6882
+  --peer 1,127.0.0.1:6881,127.0.0.1:6880 \
+  --peer 2,127.0.0.1:6883,127.0.0.1:6882
 ```
 
 ## Tests

@@ -52,7 +52,7 @@ pub async fn run(args: RunArgs) -> anyhow::Result<()> {
     let node = RaftNode::new(args.node_id).await?;
 
     // Build peer membership map from CLI args.
-    // Format: "node_id:raft_addr:api_addr" e.g. "1:127.0.0.1:6881:127.0.0.1:6880"
+    // Format: "node_id,raft_addr,api_addr" e.g. "1,127.0.0.1:6881,127.0.0.1:6880"
     let mut members = BTreeMap::new();
     members.insert(
         args.node_id,
@@ -62,7 +62,7 @@ pub async fn run(args: RunArgs) -> anyhow::Result<()> {
         },
     );
     for peer in &args.peers {
-        let parts: Vec<&str> = peer.splitn(3, ':').collect();
+        let parts: Vec<&str> = peer.splitn(3, ',').collect();
         if parts.len() == 3 {
             let peer_id: u64 = parts[0].parse()?;
             let peer_raft_addr = parts[1].to_string();
@@ -73,6 +73,10 @@ pub async fn run(args: RunArgs) -> anyhow::Result<()> {
                     raft_addr: peer_raft_addr,
                     api_addr: peer_api_addr,
                 },
+            );
+        } else {
+            anyhow::bail!(
+                "invalid --peer format: expected 'node_id,raft_addr,api_addr', got: {peer}"
             );
         }
     }
