@@ -93,6 +93,7 @@ pub async fn run(args: RunArgs) -> anyhow::Result<()> {
     // Start both gRPC servers concurrently.
     let api_server = tonic::transport::Server::builder()
         .add_service(PersistConsensusServiceServer::new(ConsensusServer {
+            raft: raft.clone(),
             batcher,
             state_machine: Arc::new(state_machine),
         }))

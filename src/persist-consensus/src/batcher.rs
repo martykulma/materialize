@@ -31,11 +31,21 @@
 
 use std::time::Duration;
 
+use openraft::error::{ClientWriteError, RaftError};
 use openraft::Raft;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
 use crate::raft_types::{ConsensusRequest, ConsensusResponse, TypeConfig};
+
+/// Error returned when a Raft proposal fails.
+#[derive(Debug)]
+pub enum ProposalError {
+    /// This node is not the Raft leader.
+    NotLeader { leader_api_addr: Option<String> },
+    /// Any other error.
+    Internal(String),
+}
 
 /// Configuration for the write batcher.
 #[derive(Debug, Clone)]
@@ -62,7 +72,7 @@ impl Default for WriteBatcherConfig {
 /// A pending write waiting to be batched.
 struct PendingWrite {
     request: ConsensusRequest,
-    response_tx: oneshot::Sender<Result<ConsensusResponse, String>>,
+    response_tx: oneshot::Sender<Result<ConsensusResponse, ProposalError>>,
 }
 
 /// Handle used by gRPC handlers to submit write requests to the batcher.
@@ -79,7 +89,7 @@ impl WriteBatcherHandle {
     pub async fn propose(
         &self,
         request: ConsensusRequest,
-    ) -> Result<ConsensusResponse, String> {
+    ) -> Result<ConsensusResponse, ProposalError> {
         let (response_tx, response_rx) = oneshot::channel();
         let pending = PendingWrite {
             request,
@@ -89,11 +99,11 @@ impl WriteBatcherHandle {
         self.tx
             .send(pending)
             .await
-            .map_err(|_| "batcher task shut down".to_string())?;
+            .map_err(|_| ProposalError::Internal("batcher task shut down".to_string()))?;
 
         response_rx
             .await
-            .map_err(|_| "batcher dropped response channel".to_string())?
+            .map_err(|_| ProposalError::Internal("batcher dropped response channel".to_string()))?
     }
 }
 
@@ -186,7 +196,11 @@ async fn submit_batch(raft: &Raft<TypeConfig>, mut batch: Vec<PendingWrite>) {
         let result = raft.client_write(pw.request).await;
         let response = match result {
             Ok(resp) => Ok(resp.data),
-            Err(e) => Err(format!("raft write error: {e}")),
+            Err(RaftError::APIError(ClientWriteError::ForwardToLeader(fwd))) => {
+                let leader_api_addr = fwd.leader_node.map(|n| n.api_addr);
+                Err(ProposalError::NotLeader { leader_api_addr })
+            }
+            Err(e) => Err(ProposalError::Internal(format!("raft write error: {e}"))),
         };
         let _ = pw.response_tx.send(response);
     } else {
@@ -211,14 +225,22 @@ async fn submit_batch(raft: &Raft<TypeConfig>, mut batch: Vec<PendingWrite>) {
                     warn!("unexpected batch response: {other:?}");
                     let msg = format!("unexpected batch response: {other:?}");
                     for sender in senders {
-                        let _ = sender.send(Err(msg.clone()));
+                        let _ = sender.send(Err(ProposalError::Internal(msg.clone())));
                     }
                 }
             },
+            Err(RaftError::APIError(ClientWriteError::ForwardToLeader(fwd))) => {
+                let leader_api_addr = fwd.leader_node.map(|n| n.api_addr);
+                for sender in senders {
+                    let _ = sender.send(Err(ProposalError::NotLeader {
+                        leader_api_addr: leader_api_addr.clone(),
+                    }));
+                }
+            }
             Err(e) => {
                 let msg = format!("raft write error: {e}");
                 for sender in senders {
-                    let _ = sender.send(Err(msg.clone()));
+                    let _ = sender.send(Err(ProposalError::Internal(msg.clone())));
                 }
             }
         }

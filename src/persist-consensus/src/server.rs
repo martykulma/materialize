@@ -19,8 +19,10 @@ use std::sync::Arc;
 use openraft::raft::{AppendEntriesRequest, VoteRequest};
 use openraft::{Raft, Snapshot, SnapshotMeta};
 use tokio_stream::wrappers::ReceiverStream;
+use tonic::metadata::{AsciiMetadataKey, AsciiMetadataValue, MetadataMap};
 use tonic::{Request, Response, Status};
 
+use crate::batcher::{ProposalError, WriteBatcherHandle};
 use crate::generated::raft::raft_service_server::RaftService as RaftServiceTrait;
 use crate::generated::raft::{ProtoRaftRequest, ProtoRaftResponse};
 use mz_persist_consensus_client::generated::service::persist_consensus_service_server::PersistConsensusService;
@@ -29,7 +31,6 @@ use mz_persist_consensus_client::generated::service::{
     ProtoCaSResult, ProtoVersionedData, ScanRequest, ScanResponse, TruncateRequest,
     TruncateResponse,
 };
-use crate::batcher::WriteBatcherHandle;
 use crate::raft_types::{ConsensusRequest, ConsensusResponse, NodeInfo, TypeConfig};
 use crate::state_machine::StateMachineStore;
 
@@ -37,14 +38,54 @@ use crate::state_machine::StateMachineStore;
 // External API — PersistConsensusService
 // ============================================================================
 
+/// Build a gRPC `UNAVAILABLE` status with the leader's API address in metadata.
+fn not_leader_status(leader_api_addr: Option<String>) -> Status {
+    let mut metadata = MetadataMap::new();
+    if let Some(addr) = leader_api_addr {
+        if let Ok(val) = AsciiMetadataValue::try_from(&addr) {
+            metadata.insert(AsciiMetadataKey::from_static("x-leader-addr"), val);
+        }
+    }
+    Status::with_metadata(tonic::Code::Unavailable, "not leader", metadata)
+}
+
+/// Map a [`ProposalError`] to a gRPC [`Status`].
+fn proposal_error_to_status(e: ProposalError) -> Status {
+    match e {
+        ProposalError::NotLeader { leader_api_addr } => not_leader_status(leader_api_addr),
+        ProposalError::Internal(msg) => Status::internal(msg),
+    }
+}
+
 /// Implements the external `PersistConsensusService` gRPC API.
 ///
 /// Read operations go directly to the state machine.
 /// Write operations are submitted through the [`WriteBatcherHandle`] which
 /// batches concurrent proposals into fewer Raft round-trips.
 pub struct ConsensusServer {
+    pub raft: Raft<TypeConfig>,
     pub batcher: WriteBatcherHandle,
     pub state_machine: Arc<StateMachineStore>,
+}
+
+impl ConsensusServer {
+    /// Check if this node is the Raft leader. If not, return an `UNAVAILABLE`
+    /// status with the current leader's API address in metadata.
+    fn ensure_leader(&self) -> Result<(), Status> {
+        let metrics = self.raft.metrics().borrow().clone();
+        let leader_id = match metrics.current_leader {
+            Some(id) if id == metrics.id => return Ok(()),
+            other => other,
+        };
+        let leader_api_addr = leader_id.and_then(|id| {
+            metrics
+                .membership_config
+                .membership()
+                .get_node(&id)
+                .map(|n| n.api_addr.clone())
+        });
+        Err(not_leader_status(leader_api_addr))
+    }
 }
 
 #[tonic::async_trait]
@@ -53,6 +94,7 @@ impl PersistConsensusService for ConsensusServer {
         &self,
         request: Request<HeadRequest>,
     ) -> Result<Response<HeadResponse>, Status> {
+        self.ensure_leader()?;
         let key = &request.into_inner().key;
         let value = self.state_machine.head(key).map(|vd| ProtoVersionedData {
             seqno: vd.seqno.0,
@@ -77,7 +119,7 @@ impl PersistConsensusService for ConsensusServer {
             .batcher
             .propose(consensus_req)
             .await
-            .map_err(|e| Status::internal(e))?;
+            .map_err(proposal_error_to_status)?;
 
         match resp {
             ConsensusResponse::CompareAndSet { committed } => {
@@ -99,6 +141,7 @@ impl PersistConsensusService for ConsensusServer {
         &self,
         request: Request<ScanRequest>,
     ) -> Result<Response<ScanResponse>, Status> {
+        self.ensure_leader()?;
         let req = request.into_inner();
         let from = mz_persist::location::SeqNo(req.from);
         let limit = req.limit as usize;
@@ -128,7 +171,7 @@ impl PersistConsensusService for ConsensusServer {
             .batcher
             .propose(consensus_req)
             .await
-            .map_err(|e| Status::internal(e))?;
+            .map_err(proposal_error_to_status)?;
 
         match resp {
             ConsensusResponse::Truncate { deleted } => Ok(Response::new(TruncateResponse {
@@ -145,6 +188,7 @@ impl PersistConsensusService for ConsensusServer {
         &self,
         _request: Request<ListKeysRequest>,
     ) -> Result<Response<Self::ListKeysStream>, Status> {
+        self.ensure_leader()?;
         let keys = self.state_machine.list_keys();
         let (tx, rx) = tokio::sync::mpsc::channel(128);
 
