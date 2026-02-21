@@ -51,6 +51,7 @@ workspace-hack = { version = "0.0.0", path = "../workspace-hack", optional = tru
 [features]
 default = ["tokio-console", "workspace-hack"]
 tokio-console = ["mz-ore/tokio-console"]
+raft = ["mz-persist-client/raft"]
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["workspace-hack"]
