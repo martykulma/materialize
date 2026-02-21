@@ -29,6 +29,7 @@ use mz_persist_consensus_client::generated::service::{
     ProtoCaSResult, ProtoVersionedData, ScanRequest, ScanResponse, TruncateRequest,
     TruncateResponse,
 };
+use crate::batcher::WriteBatcherHandle;
 use crate::raft_types::{ConsensusRequest, ConsensusResponse, NodeInfo, TypeConfig};
 use crate::state_machine::StateMachineStore;
 
@@ -39,9 +40,10 @@ use crate::state_machine::StateMachineStore;
 /// Implements the external `PersistConsensusService` gRPC API.
 ///
 /// Read operations go directly to the state machine.
-/// Write operations are proposed through Raft for linearizable consensus.
+/// Write operations are submitted through the [`WriteBatcherHandle`] which
+/// batches concurrent proposals into fewer Raft round-trips.
 pub struct ConsensusServer {
-    pub raft: Raft<TypeConfig>,
+    pub batcher: WriteBatcherHandle,
     pub state_machine: Arc<StateMachineStore>,
 }
 
@@ -72,12 +74,12 @@ impl PersistConsensusService for ConsensusServer {
         };
 
         let resp = self
-            .raft
-            .client_write(consensus_req)
+            .batcher
+            .propose(consensus_req)
             .await
-            .map_err(|e| Status::internal(format!("raft write error: {e}")))?;
+            .map_err(|e| Status::internal(e))?;
 
-        match resp.data {
+        match resp {
             ConsensusResponse::CompareAndSet { committed } => {
                 let result = if committed {
                     ProtoCaSResult::Committed
@@ -123,12 +125,12 @@ impl PersistConsensusService for ConsensusServer {
         };
 
         let resp = self
-            .raft
-            .client_write(consensus_req)
+            .batcher
+            .propose(consensus_req)
             .await
-            .map_err(|e| Status::internal(format!("raft write error: {e}")))?;
+            .map_err(|e| Status::internal(e))?;
 
-        match resp.data {
+        match resp {
             ConsensusResponse::Truncate { deleted } => Ok(Response::new(TruncateResponse {
                 deleted: deleted.map(|d| d as u64),
             })),

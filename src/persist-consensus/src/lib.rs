@@ -17,6 +17,7 @@
 //!   `scan`, `truncate`, and `list_keys` operations.
 //! - **Internal Raft RPCs** (`RaftService`): gRPC service for Raft node-to-node communication.
 
+pub mod batcher;
 pub mod generated;
 pub mod network;
 pub mod node;
@@ -31,6 +32,7 @@ use std::sync::Arc;
 
 use tracing::info;
 
+use crate::batcher::{WriteBatcherConfig, start_write_batcher};
 use crate::generated::raft::raft_service_server::RaftServiceServer;
 use mz_persist_consensus_client::generated::service::persist_consensus_service_server::PersistConsensusServiceServer;
 use crate::node::RaftNode;
@@ -82,11 +84,12 @@ pub async fn run(args: RunArgs) -> anyhow::Result<()> {
 
     let raft = node.raft.clone();
     let state_machine = node.state_machine.clone();
+    let batcher = start_write_batcher(raft.clone(), WriteBatcherConfig::default());
 
     // Start both gRPC servers concurrently.
     let api_server = tonic::transport::Server::builder()
         .add_service(PersistConsensusServiceServer::new(ConsensusServer {
-            raft: raft.clone(),
+            batcher,
             state_machine: Arc::new(state_machine),
         }))
         .serve(args.api_listen_addr);

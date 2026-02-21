@@ -121,6 +121,13 @@ pub fn apply_request(
             store.entry(key).or_default().push(new);
             ConsensusResponse::CompareAndSet { committed: true }
         }
+        ConsensusRequest::Batch(requests) => {
+            let responses = requests
+                .into_iter()
+                .map(|req| apply_request(store, req))
+                .collect();
+            ConsensusResponse::Batch(responses)
+        }
         ConsensusRequest::Truncate { key, seqno } => {
             let seqno = SeqNo(seqno);
 
@@ -243,5 +250,156 @@ mod tests {
         let values = store.get("k1").unwrap();
         assert_eq!(values.len(), 1);
         assert_eq!(values[0].seqno, SeqNo(10));
+    }
+
+    #[test]
+    fn test_batch_apply() {
+        let mut store = BTreeMap::new();
+
+        // Batch: insert k1, then insert k2, then insert k1 again (with correct expected).
+        let resp = apply_request(
+            &mut store,
+            ConsensusRequest::Batch(vec![
+                ConsensusRequest::CompareAndSet {
+                    key: "k1".to_string(),
+                    expected: None,
+                    new_seqno: 1,
+                    new_data: b"a".to_vec(),
+                },
+                ConsensusRequest::CompareAndSet {
+                    key: "k2".to_string(),
+                    expected: None,
+                    new_seqno: 1,
+                    new_data: b"b".to_vec(),
+                },
+                ConsensusRequest::CompareAndSet {
+                    key: "k1".to_string(),
+                    expected: Some(1),
+                    new_seqno: 2,
+                    new_data: b"c".to_vec(),
+                },
+            ]),
+        );
+
+        match resp {
+            ConsensusResponse::Batch(responses) => {
+                assert_eq!(responses.len(), 3);
+                assert!(matches!(
+                    responses[0],
+                    ConsensusResponse::CompareAndSet { committed: true }
+                ));
+                assert!(matches!(
+                    responses[1],
+                    ConsensusResponse::CompareAndSet { committed: true }
+                ));
+                assert!(matches!(
+                    responses[2],
+                    ConsensusResponse::CompareAndSet { committed: true }
+                ));
+            }
+            other => panic!("expected Batch response, got: {other:?}"),
+        }
+
+        // Verify state: k1 has seqno 2, k2 has seqno 1.
+        assert_eq!(store.get("k1").unwrap().last().unwrap().seqno, SeqNo(2));
+        assert_eq!(store.get("k2").unwrap().last().unwrap().seqno, SeqNo(1));
+    }
+
+    #[test]
+    fn test_batch_partial_failure() {
+        let mut store = BTreeMap::new();
+
+        // Insert k1 first.
+        apply_request(
+            &mut store,
+            ConsensusRequest::CompareAndSet {
+                key: "k1".to_string(),
+                expected: None,
+                new_seqno: 5,
+                new_data: b"abc".to_vec(),
+            },
+        );
+
+        // Batch where second request has wrong expected seqno (3 instead of 5).
+        // Note: new_seqno must be > expected for the request to be valid,
+        // so we use expected=3, new_seqno=10 to get a CAS mismatch (not an error).
+        let resp = apply_request(
+            &mut store,
+            ConsensusRequest::Batch(vec![
+                ConsensusRequest::CompareAndSet {
+                    key: "k2".to_string(),
+                    expected: None,
+                    new_seqno: 1,
+                    new_data: b"ok".to_vec(),
+                },
+                ConsensusRequest::CompareAndSet {
+                    key: "k1".to_string(),
+                    expected: Some(3), // wrong: actual head is 5
+                    new_seqno: 10,
+                    new_data: b"fail".to_vec(),
+                },
+            ]),
+        );
+
+        match resp {
+            ConsensusResponse::Batch(responses) => {
+                assert_eq!(responses.len(), 2);
+                // First succeeds.
+                assert!(matches!(
+                    responses[0],
+                    ConsensusResponse::CompareAndSet { committed: true }
+                ));
+                // Second fails (expectation mismatch).
+                assert!(matches!(
+                    responses[1],
+                    ConsensusResponse::CompareAndSet { committed: false }
+                ));
+            }
+            other => panic!("expected Batch response, got: {other:?}"),
+        }
+
+        // k2 was created, k1 unchanged.
+        assert_eq!(store.get("k2").unwrap().last().unwrap().seqno, SeqNo(1));
+        assert_eq!(store.get("k1").unwrap().last().unwrap().seqno, SeqNo(5));
+    }
+
+    #[test]
+    fn test_batch_single_element() {
+        let mut store = BTreeMap::new();
+
+        let resp = apply_request(
+            &mut store,
+            ConsensusRequest::Batch(vec![ConsensusRequest::CompareAndSet {
+                key: "k1".to_string(),
+                expected: None,
+                new_seqno: 1,
+                new_data: b"solo".to_vec(),
+            }]),
+        );
+
+        match resp {
+            ConsensusResponse::Batch(responses) => {
+                assert_eq!(responses.len(), 1);
+                assert!(matches!(
+                    responses[0],
+                    ConsensusResponse::CompareAndSet { committed: true }
+                ));
+            }
+            other => panic!("expected Batch response, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_batch_empty() {
+        let mut store = BTreeMap::new();
+
+        let resp = apply_request(&mut store, ConsensusRequest::Batch(vec![]));
+
+        match resp {
+            ConsensusResponse::Batch(responses) => {
+                assert!(responses.is_empty());
+            }
+            other => panic!("expected Batch response, got: {other:?}"),
+        }
     }
 }

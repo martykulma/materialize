@@ -26,6 +26,9 @@ pub enum ConsensusRequest {
         key: String,
         seqno: u64,
     },
+    /// A batch of requests applied atomically in order.
+    /// Used by the write batcher to coalesce concurrent proposals.
+    Batch(Vec<ConsensusRequest>),
 }
 
 /// The response from applying a consensus request.
@@ -40,6 +43,8 @@ pub enum ConsensusResponse {
     Error {
         message: String,
     },
+    /// Responses for a batch of requests, in the same order as the input.
+    Batch(Vec<ConsensusResponse>),
 }
 
 /// Information about a Raft cluster node.
