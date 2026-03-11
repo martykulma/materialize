@@ -770,6 +770,7 @@ pub fn plan_create_source(
         with_options,
         external_references: referenced_subsources,
         progress_subsource,
+        state_subsources: _,
     } = &stmt;
 
     mz_ore::soft_assert_or_log!(

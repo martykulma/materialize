@@ -339,7 +339,9 @@ impl Coordinator {
                         }
                     }
                 }
-                plan::DataSourceDesc::IngestionExport { .. } | plan::DataSourceDesc::Progress => {}
+                plan::DataSourceDesc::IngestionExport { .. }
+                | plan::DataSourceDesc::Progress
+                | plan::DataSourceDesc::State => {}
             }
 
             // Attempt to reduce the `CHECK` expression, we timeout if this takes too long.
@@ -508,8 +510,7 @@ impl Coordinator {
     }
 
     /// Prepares a `CREATE SOURCE` statement to create its progress subsource,
-    /// the primary source, and any ingestion export subsources (e.g. PG
-    /// tables).
+    /// the primary source, and any ingestion export subsources (e.g. PG tables).
     pub(crate) async fn plan_purified_create_source(
         &mut self,
         ctx: &ExecuteContext,

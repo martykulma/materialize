@@ -1018,6 +1018,10 @@ pub struct CreateSourceStatement<T: AstInfo> {
     pub with_options: Vec<CreateSourceOption<T>>,
     pub external_references: Option<ExternalReferences>,
     pub progress_subsource: Option<DeferredItemName<T>>,
+    /// State collections keyed by their identifier (e.g., `errors`,
+    /// `timeline_history`). Populated during purification and serialized into
+    /// the catalog's `create_sql` as `EXPOSE STATE <key> AS <name>`.
+    pub state_subsources: BTreeMap<Ident, DeferredItemName<T>>,
 }
 
 impl<T: AstInfo> AstDisplay for CreateSourceStatement<T> {
@@ -1068,6 +1072,13 @@ impl<T: AstInfo> AstDisplay for CreateSourceStatement<T> {
         if let Some(progress) = &self.progress_subsource {
             f.write_str(" EXPOSE PROGRESS AS ");
             f.write_node(progress);
+        }
+
+        for (key, name) in &self.state_subsources {
+            f.write_str(" EXPOSE STATE ");
+            f.write_node(key);
+            f.write_str(" AS ");
+            f.write_node(name);
         }
 
         if !self.with_options.is_empty() {

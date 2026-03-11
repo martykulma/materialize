@@ -133,6 +133,8 @@ pub enum DataSource<T> {
     Introspection(IntrospectionType),
     /// Data comes from the source's remapping/reclock operator.
     Progress,
+    /// Data comes from the source's state/checkpoint collection.
+    State,
     /// Data comes from external HTTP requests pushed to Materialize.
     Webhook,
     /// The adapter layer appends timestamped data, i.e. it is a `TABLE`.
@@ -756,6 +758,7 @@ impl<T> DataSource<T> {
             | DataSource::IngestionExport { .. }
             | DataSource::Introspection(_)
             | DataSource::Progress
+            | DataSource::State
             | DataSource::Webhook => false,
             DataSource::Sink { .. } => false,
         }

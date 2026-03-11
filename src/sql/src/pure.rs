@@ -712,6 +712,7 @@ async fn purify_create_source(
         include_metadata,
         external_references,
         progress_subsource,
+        state_subsources,
         with_options,
         ..
     } = &mut create_source_stmt;
@@ -722,10 +723,17 @@ async fn purify_create_source(
         || envelope.is_some()
         || !include_metadata.is_empty()
         || external_references.is_some()
-        || progress_subsource.is_some();
+        || progress_subsource.is_some()
+        || !state_subsources.is_empty();
 
     if let Some(DeferredItemName::Named(_)) = progress_subsource {
         sql_bail!("Cannot manually ID qualify progress subsource")
+    }
+
+    for (key, name) in state_subsources.iter() {
+        if let DeferredItemName::Named(_) = name {
+            sql_bail!("Cannot manually ID qualify state subsource '{}'", key)
+        }
     }
 
     let mut requested_subsource_map = BTreeMap::new();
@@ -747,6 +755,7 @@ async fn purify_create_source(
             &mz_storage_types::sources::load_generator::LOAD_GEN_PROGRESS_DESC
         }
     };
+
     let scx = StatementContext::new(None, &catalog);
 
     // Depending on if the user must or can use the `CREATE TABLE .. FROM SOURCE` statement

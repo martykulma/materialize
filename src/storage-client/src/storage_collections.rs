@@ -885,6 +885,7 @@ where
             | DataSource::Webhook
             | DataSource::Table
             | DataSource::Progress
+            | DataSource::State
             | DataSource::Other => (),
             DataSource::IngestionExport {
                 ingestion_id,
@@ -1847,6 +1848,7 @@ where
                         | DataSource::Webhook
                         | DataSource::Ingestion(_)
                         | DataSource::Progress
+                        | DataSource::State
                         | DataSource::Other => {}
                         DataSource::Sink { .. } => {}
                         DataSource::Table => {
@@ -2010,8 +2012,8 @@ where
                             let c = self_collections.get(ingestion_id).expect("known to exist");
                             c.time_dependence.clone()
                         }
-                        // Introspection, other, progress, table, and webhook sources follow wall clock.
-                        Introspection(_) | Progress | Table { .. } | Webhook { .. } => {
+                        // Introspection, other, progress, state, table, and webhook sources follow wall clock.
+                        Introspection(_) | Progress | State | Table { .. } | Webhook { .. } => {
                             Some(TimeDependence::default())
                         }
                         // Materialized views, continual tasks, etc, aren't managed by storage.
@@ -2067,7 +2069,7 @@ where
                     }
                     self_collections.insert(id, collection_state);
                 }
-                DataSource::Progress | DataSource::Other => {
+                DataSource::Progress | DataSource::State | DataSource::Other => {
                     self_collections.insert(id, collection_state);
                 }
                 DataSource::Ingestion(_) => {

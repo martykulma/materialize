@@ -503,6 +503,55 @@ impl FromStr for Timeline {
     }
 }
 
+/// An identifier for a state collection associated with a source.
+#[derive(
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Serialize,
+    Deserialize
+)]
+pub struct StateCollectionId(pub String);
+
+/// A typed key for source-specific state collections.
+///
+/// Each source type that needs persistent state collections defines an enum
+/// implementing this trait. Generic infrastructure uses the type-erased
+/// [`StateCollectionId`] / [`RelationDesc`] pairs returned by
+/// [`StateCollectionKey::all_descs`].
+pub trait StateCollectionKey: Debug + Clone + Eq + Hash + 'static {
+    fn name_suffix(&self) -> &'static str;
+    fn desc(&self) -> RelationDesc;
+    fn all() -> Vec<Self>;
+
+    fn id(&self) -> StateCollectionId {
+        StateCollectionId(self.name_suffix().to_string())
+    }
+
+    fn all_descs() -> Vec<(StateCollectionId, RelationDesc)> {
+        Self::all()
+            .into_iter()
+            .map(|k| (k.id(), k.desc()))
+            .collect()
+    }
+}
+
+impl StateCollectionKey for () {
+    fn name_suffix(&self) -> &'static str {
+        unreachable!("unit has no variants")
+    }
+    fn desc(&self) -> RelationDesc {
+        unreachable!("unit has no variants")
+    }
+    fn all() -> Vec<Self> {
+        vec![]
+    }
+}
+
 /// A connection to an external system
 pub trait SourceConnection: Debug + Clone + PartialEq + AlterCompatible {
     /// The name of the external system (e.g kafka, postgres, etc).
@@ -534,6 +583,12 @@ pub trait SourceConnection: Debug + Clone + PartialEq + AlterCompatible {
 
     /// Whether the source type prefers to run on only one replica of a multi-replica cluster.
     fn prefers_single_replica(&self) -> bool;
+
+    /// The state collections associated with this source type.
+    /// Returns an empty vec by default (no state collections).
+    fn state_descs(&self) -> Vec<(StateCollectionId, RelationDesc)> {
+        vec![]
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -824,6 +879,16 @@ impl<C: ConnectionAccess> SourceConnection for GenericSourceConnection<C> {
             GenericSourceConnection::MySql(conn) => conn.prefers_single_replica(),
             GenericSourceConnection::SqlServer(conn) => conn.prefers_single_replica(),
             GenericSourceConnection::LoadGenerator(conn) => conn.prefers_single_replica(),
+        }
+    }
+
+    fn state_descs(&self) -> Vec<(StateCollectionId, RelationDesc)> {
+        match self {
+            Self::Kafka(conn) => conn.state_descs(),
+            Self::Postgres(conn) => conn.state_descs(),
+            Self::MySql(conn) => conn.state_descs(),
+            Self::SqlServer(conn) => conn.state_descs(),
+            Self::LoadGenerator(conn) => conn.state_descs(),
         }
     }
 }

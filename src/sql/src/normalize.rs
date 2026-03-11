@@ -274,6 +274,7 @@ pub fn create_statement(
             with_options: _,
             external_references: _,
             progress_subsource: _,
+            state_subsources: _,
         }) => {
             *name = allocate_name(name)?;
             *if_not_exists = false;

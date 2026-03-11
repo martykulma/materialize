@@ -2900,6 +2900,7 @@ impl Coordinator {
                 }
                 DataSourceDesc::Webhook { .. } => DataSource::Webhook,
                 DataSourceDesc::Progress => DataSource::Progress,
+                DataSourceDesc::State => DataSource::State,
                 DataSourceDesc::Introspection(introspection) => {
                     DataSource::Introspection(introspection)
                 }

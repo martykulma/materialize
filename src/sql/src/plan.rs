@@ -1548,6 +1548,8 @@ pub enum DataSourceDesc {
     },
     /// Receives data from the source's reclocking/remapping operations.
     Progress,
+    /// Receives source specific data.
+    State,
     /// Receives data from HTTP post requests.
     Webhook {
         validate_using: Option<WebhookValidation>,

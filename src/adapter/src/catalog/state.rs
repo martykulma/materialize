@@ -1232,6 +1232,7 @@ impl CatalogState {
                         data_config,
                     },
                     mz_sql::plan::DataSourceDesc::Progress => DataSourceDesc::Progress,
+                    mz_sql::plan::DataSourceDesc::State => DataSourceDesc::State,
                     mz_sql::plan::DataSourceDesc::Webhook {
                         validate_using,
                         body_format,

@@ -1359,6 +1359,8 @@ impl Coordinator {
                 return;
             }
 
+            // TODO (maz) --- prevent running CreateState
+
             // `CREATE SUBSOURCE` statements are disallowed for users and are only generated
             // automatically as part of purification
             Statement::CreateSubsource(_) => {

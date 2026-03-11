@@ -1085,7 +1085,7 @@ where
                     );
                     table_registers.push((id, write));
                 }
-                DataSource::Progress | DataSource::Other => {
+                DataSource::Progress | DataSource::State | DataSource::Other => {
                     debug!(
                         ?data_source, meta = ?metadata,
                         "not registering {id} with a controller persist worker",
@@ -1211,6 +1211,7 @@ where
                 | DataSource::Webhook
                 | DataSource::Table
                 | DataSource::Progress
+                | DataSource::State
                 | DataSource::Other => {}
                 DataSource::Sink { .. } => {
                     if !self.read_only {
@@ -1899,7 +1900,10 @@ where
                         ingestions_to_drop.insert(*id);
                         source_statistics_to_drop.push(*id);
                     }
-                    DataSource::Progress | DataSource::Table | DataSource::Other => {
+                    DataSource::Progress
+                    | DataSource::State
+                    | DataSource::Table
+                    | DataSource::Other => {
                         collections_to_drop.push(*id);
                     }
                     DataSource::Introspection(_) | DataSource::Sink { .. } => {
@@ -3344,6 +3348,7 @@ where
             | DataSource::Webhook
             | DataSource::Table
             | DataSource::Progress
+            | DataSource::State
             | DataSource::Other => (),
             DataSource::IngestionExport { ingestion_id, .. } => {
                 // Ingestion exports depend on their primary source's remap

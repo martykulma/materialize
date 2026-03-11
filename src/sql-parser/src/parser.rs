@@ -3021,6 +3021,14 @@ impl<'a> Parser<'a> {
             None
         };
 
+        let mut state_subsources = BTreeMap::new();
+        while self.parse_keywords(&[EXPOSE, STATE]) {
+            let key = self.parse_identifier()?;
+            self.expect_keyword(AS)?;
+            let name = self.parse_deferred_item_name()?;
+            state_subsources.insert(key, name);
+        }
+
         // New WITH block
         let with_options = if self.parse_keyword(WITH) {
             self.expect_token(&Token::LParen)?;
@@ -3043,6 +3051,7 @@ impl<'a> Parser<'a> {
             key_constraint,
             external_references: referenced_subsources,
             progress_subsource,
+            state_subsources,
             with_options,
         }))
     }
