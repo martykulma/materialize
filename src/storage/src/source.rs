@@ -35,7 +35,7 @@ pub mod types;
 pub mod generator;
 mod kafka;
 mod mysql;
-mod postgres;
+pub(crate) mod postgres;
 mod sql_server;
 
 pub use kafka::KafkaSourceReader;

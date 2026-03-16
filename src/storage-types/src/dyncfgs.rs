@@ -167,6 +167,22 @@ pub const MYSQL_REPLICATION_HEARTBEAT_INTERVAL: Config<Duration> = Config::new(
 
 // Postgres
 
+/// When enabled, use a direct (non-timely) async pipeline for PostgreSQL sources.
+pub const DIRECT_PG_SOURCE: Config<bool> = Config::new(
+    "direct_pg_source",
+    true,
+    "When enabled, use a direct async pipeline for PostgreSQL sources, bypassing timely.",
+);
+
+/// Maximum number of concurrent compare_and_append operations per PostgreSQL
+/// source. Limits consensus connection pool usage, reserving capacity for
+/// remap, GC, and compaction.
+pub const PG_DIRECT_MAX_CONCURRENT_APPENDS: Config<usize> = Config::new(
+    "pg_direct_max_concurrent_appends",
+    16,
+    "Maximum concurrent compare_and_append operations per direct PG source.",
+);
+
 /// Interval to poll `confirmed_flush_lsn` to get a resumption lsn.
 pub const PG_FETCH_SLOT_RESUME_LSN_INTERVAL: Config<Duration> = Config::new(
     "postgres_fetch_slot_resume_lsn_interval",
@@ -333,6 +349,8 @@ pub fn all_dyncfgs(configs: ConfigSet) -> ConfigSet {
         .add(&KAFKA_RECONNECT_BACKOFF_MAX)
         .add(&MYSQL_REPLICATION_HEARTBEAT_INTERVAL)
         .add(&ORE_OVERFLOWING_BEHAVIOR)
+        .add(&DIRECT_PG_SOURCE)
+        .add(&PG_DIRECT_MAX_CONCURRENT_APPENDS)
         .add(&PG_FETCH_SLOT_RESUME_LSN_INTERVAL)
         .add(&PG_SCHEMA_VALIDATION_INTERVAL)
         .add(&PG_SOURCE_VALIDATE_TIMELINE)

@@ -224,6 +224,7 @@ use crate::source::RawSourceCreationConfig;
 use crate::storage_state::StorageState;
 
 mod persist_sink;
+pub(crate) mod postgres_direct;
 pub mod sinks;
 pub mod sources;
 
@@ -241,6 +242,44 @@ pub fn build_ingestion_dataflow<A: Allocate>(
     source_resume_uppers: BTreeMap<GlobalId, Vec<Row>>,
 ) {
     let worker_id = timely_worker.index();
+    // Check if we should use the direct (non-timely) pipeline for Postgres sources.
+    if let GenericSourceConnection::Postgres(ref pg_conn) = description.desc.connection {
+        let direct_enabled =
+            dyncfgs::DIRECT_PG_SOURCE.get(storage_state.storage_configuration.config_set());
+        tracing::warn!(
+            %primary_source_id,
+            %direct_enabled,
+            %worker_id,
+            "DIRECT_PG_SOURCE check"
+        );
+        if direct_enabled {
+            if worker_id == 0 {
+                tracing::info!(%worker_id, "spawn task");
+                // Worker 0 spawns the async task and owns the guard.
+                let guard = postgres_direct::spawn_direct_pg_source(
+                    primary_source_id,
+                    pg_conn.clone(),
+                    description,
+                    as_of,
+                    resume_uppers,
+                    source_resume_uppers,
+                    storage_state,
+                );
+                storage_state
+                    .direct_source_guards
+                    .insert(primary_source_id, guard);
+            } else {
+                // Non-zero workers remove their source_uppers entries so they don't
+                // report stale frontiers that hold back the controller's view.
+                // for id in description.collection_ids() {
+                //     storage_state.source_uppers.remove(&id);
+                // }
+                tracing::info!(%worker_id, "later gator!");
+            }
+            return;
+        }
+    }
+
     let worker_logging = timely_worker.logger_for("timely").map(Into::into);
     let debug_name = primary_source_id.to_string();
     let name = format!("Source dataflow: {debug_name}");

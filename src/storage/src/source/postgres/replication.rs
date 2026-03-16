@@ -1017,7 +1017,7 @@ fn extract_transaction<'a>(
 /// Unpacks an iterator of TupleData into a list of nullable bytes or an error if this can't be
 /// done.
 #[inline]
-fn unpack_tuple<'a, I>(tuple_data: I, row: &mut Row) -> Result<Row, DefiniteError>
+pub(crate) fn unpack_tuple<'a, I>(tuple_data: I, row: &mut Row) -> Result<Row, DefiniteError>
 where
     I: IntoIterator<Item = &'a TupleData>,
     I::IntoIter: ExactSizeIterator,

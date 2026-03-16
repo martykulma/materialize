@@ -207,6 +207,7 @@ impl<'w, A: Allocate> Worker<'w, A> {
         let storage_state = StorageState {
             source_uppers: BTreeMap::new(),
             source_tokens: BTreeMap::new(),
+            direct_source_guards: BTreeMap::new(),
             metrics,
             reported_frontiers: BTreeMap::new(),
             ingestions: BTreeMap::new(),
@@ -269,6 +270,8 @@ pub struct StorageState {
     /// NB: The type of the tokens must not be changed to something other than `PressOnDropButton`
     /// to prevent usage of custom shutdown tokens that are tricky to get right.
     pub source_tokens: BTreeMap<GlobalId, Vec<PressOnDropButton>>,
+    /// Guards for direct (non-timely) source pipelines. Dropping the guard cancels the pipeline.
+    pub direct_source_guards: BTreeMap<GlobalId, crate::render::postgres_direct::DirectSourceGuard>,
     /// Metrics for storage objects.
     pub metrics: StorageMetrics,
     /// Tracks the conditional write frontiers we have reported.
@@ -816,6 +819,7 @@ impl<'w, A: Allocate> Worker<'w, A> {
                     // Clean up per-source / per-sink state.
                     self.storage_state.source_uppers.remove(id);
                     self.storage_state.source_tokens.remove(id);
+                    self.storage_state.direct_source_guards.remove(id);
 
                     self.storage_state.sink_tokens.remove(id);
                     self.storage_state.sink_write_frontiers.remove(id);
@@ -863,6 +867,20 @@ impl<'w, A: Allocate> Worker<'w, A> {
     /// with the understanding if that if made durable (and ack'd back to the workers) the source will
     /// in fact progress with this write frontier.
     pub fn report_frontier_progress(&mut self, response_tx: &ResponseSender) {
+        // Update source_uppers from direct source watch channels before reading them.
+        // This copies the latest frontier values from the async task into the shared
+        // Rc<RefCell<>> entries that the standard frontier reporting loop below reads.
+        let mut direct_status_updates = Vec::new();
+        for (_id, guard) in self.storage_state.direct_source_guards.iter() {
+            guard.update_source_uppers(&mut direct_status_updates);
+        }
+        for update in direct_status_updates {
+            self.storage_state
+                .shared_status_updates
+                .borrow_mut()
+                .push(update);
+        }
+
         let mut new_uppers = Vec::new();
 
         // Check if any observed frontier should advance the reported frontiers.

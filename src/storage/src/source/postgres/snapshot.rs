@@ -808,7 +808,7 @@ pub(crate) fn render<G: Scope<Timestamp = MzOffset>>(
 /// Starts a read-only transaction on the SQL session of `client` at a consistent LSN point by
 /// creating a replication slot. Returns a snapshot identifier that can be imported in
 /// other SQL session and the LSN of the consistent point.
-async fn export_snapshot(
+pub(crate) async fn export_snapshot(
     client: &Client,
     slot: &str,
     temporary: bool,
@@ -865,7 +865,7 @@ async fn export_snapshot_inner(
 
 /// Starts a read-only transaction on the SQL session of `client` at a the consistent LSN point of
 /// `snapshot`.
-async fn use_snapshot(client: &Client, snapshot: &str) -> Result<(), TransientError> {
+pub(crate) async fn use_snapshot(client: &Client, snapshot: &str) -> Result<(), TransientError> {
     client
         .simple_query("BEGIN READ ONLY ISOLATION LEVEL REPEATABLE READ;")
         .await?;
@@ -887,7 +887,7 @@ async fn set_statement_timeout(client: &Client, timeout: Duration) -> Result<(),
 }
 
 /// Decodes a row of `col_len` columns obtained from a text encoded COPY query into `row`.
-fn decode_copy_row(data: &[u8], col_len: usize, row: &mut Row) -> Result<(), DefiniteError> {
+pub(crate) fn decode_copy_row(data: &[u8], col_len: usize, row: &mut Row) -> Result<(), DefiniteError> {
     let mut packer = row.packer();
     let row_parser = mz_pgcopy::CopyTextFormatParser::new(data, b'\t', "\\N");
     let mut column_iter = row_parser.iter_raw_truncating(col_len);

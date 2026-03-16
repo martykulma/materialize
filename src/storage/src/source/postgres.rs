@@ -114,8 +114,8 @@ use crate::healthcheck::{HealthStatusMessage, HealthStatusUpdate, StatusNamespac
 use crate::source::types::{Probe, SourceRender, StackedCollection};
 use crate::source::{RawSourceCreationConfig, SourceMessage};
 
-mod replication;
-mod snapshot;
+pub(crate) mod replication;
+pub(crate) mod snapshot;
 
 impl SourceRender for PostgresSourceConnection {
     type Time = MzOffset;
@@ -267,16 +267,16 @@ impl SourceRender for PostgresSourceConnection {
 }
 
 #[derive(Clone, Debug)]
-struct SourceOutputInfo {
+pub(crate) struct SourceOutputInfo {
     /// The expected upstream schema of this output.
-    desc: PostgresTableDesc,
+    pub(crate) desc: PostgresTableDesc,
     /// A projection of the upstream columns into the columns expected by this output. This field
     /// is recalculated every time we observe an upstream schema change. On dataflow initialization
     /// this field is None since we haven't yet observed any schemas.
-    projection: Option<Vec<usize>>,
-    casts: Vec<(CastType, MirScalarExpr)>,
-    resume_upper: Antichain<MzOffset>,
-    export_id: GlobalId,
+    pub(crate) projection: Option<Vec<usize>>,
+    pub(crate) casts: Vec<(CastType, MirScalarExpr)>,
+    pub(crate) resume_upper: Antichain<MzOffset>,
+    pub(crate) export_id: GlobalId,
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -387,7 +387,7 @@ impl From<DefiniteError> for DataflowError {
     }
 }
 
-async fn ensure_replication_slot(client: &Client, slot: &str) -> Result<(), TransientError> {
+pub(crate) async fn ensure_replication_slot(client: &Client, slot: &str) -> Result<(), TransientError> {
     // Note: Using unchecked here is okay because we're using it in a SQL query.
     let slot = Ident::new_unchecked(slot).to_ast_string_simple();
     let query = format!("CREATE_REPLICATION_SLOT {slot} LOGICAL \"pgoutput\" NOEXPORT_SNAPSHOT");
@@ -403,17 +403,17 @@ async fn ensure_replication_slot(client: &Client, slot: &str) -> Result<(), Tran
 }
 
 /// The state of a replication slot.
-struct SlotMetadata {
+pub(crate) struct SlotMetadata {
     /// The process ID of the session using this slot if the slot is currently actively being used.
     /// None if inactive.
-    active_pid: Option<i32>,
+    pub(crate) active_pid: Option<i32>,
     /// The address (LSN) up to which the logical slot's consumer has confirmed receiving data.
     /// Data corresponding to the transactions committed before this LSN is not available anymore.
-    confirmed_flush_lsn: MzOffset,
+    pub(crate) confirmed_flush_lsn: MzOffset,
 }
 
 /// Fetches the minimum LSN at which this slot can safely resume.
-async fn fetch_slot_metadata(
+pub(crate) async fn fetch_slot_metadata(
     client: &Client,
     slot: &str,
     interval: Duration,
@@ -444,7 +444,7 @@ async fn fetch_slot_metadata(
 }
 
 /// Fetch the `pg_current_wal_lsn`, used to report metrics.
-async fn fetch_max_lsn(client: &Client) -> Result<MzOffset, TransientError> {
+pub(crate) async fn fetch_max_lsn(client: &Client) -> Result<MzOffset, TransientError> {
     let query = "SELECT pg_current_wal_lsn()";
     let row = simple_query_opt(client, query).await?;
 
@@ -465,7 +465,7 @@ async fn fetch_max_lsn(client: &Client) -> Result<MzOffset, TransientError> {
 
 // Ensures that the table with oid `oid` and expected schema `expected_schema` is still compatible
 // with the current upstream schema `upstream_info`.
-fn verify_schema(
+pub(crate) fn verify_schema(
     oid: u32,
     info: &SourceOutputInfo,
     upstream_info: &BTreeMap<u32, PostgresTableDesc>,
@@ -493,7 +493,7 @@ fn verify_schema(
 }
 
 /// Casts a text row into the target types
-fn cast_row(
+pub(crate) fn cast_row(
     casts: &[(CastType, MirScalarExpr)],
     datums: &[Datum<'_>],
     row: &mut Row,
@@ -510,7 +510,7 @@ fn cast_row(
 }
 
 /// Converts raw bytes that are expected to be UTF8 encoded into a `Datum::String`
-fn decode_utf8_text(bytes: &[u8]) -> Result<Datum<'_>, DefiniteError> {
+pub(crate) fn decode_utf8_text(bytes: &[u8]) -> Result<Datum<'_>, DefiniteError> {
     match std::str::from_utf8(bytes) {
         Ok(text) => Ok(Datum::String(text)),
         Err(_) => Err(DefiniteError::InvalidUTF8(bytes.to_vec())),
