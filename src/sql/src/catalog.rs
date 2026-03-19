@@ -917,6 +917,8 @@ pub enum CatalogItemType {
     Connection,
     /// A continual task.
     ContinualTask,
+    /// A state collection.
+    State,
 }
 
 impl CatalogItemType {
@@ -951,6 +953,7 @@ impl CatalogItemType {
             CatalogItemType::Secret => false,
             CatalogItemType::Connection => false,
             CatalogItemType::ContinualTask => true,
+            CatalogItemType::State => true,
         }
     }
 }
@@ -969,6 +972,7 @@ impl fmt::Display for CatalogItemType {
             CatalogItemType::Secret => f.write_str("secret"),
             CatalogItemType::Connection => f.write_str("connection"),
             CatalogItemType::ContinualTask => f.write_str("continual task"),
+            CatalogItemType::State => f.write_str("state"),
         }
     }
 }
@@ -987,6 +991,7 @@ impl From<CatalogItemType> for ObjectType {
             CatalogItemType::Secret => ObjectType::Secret,
             CatalogItemType::Connection => ObjectType::Connection,
             CatalogItemType::ContinualTask => ObjectType::ContinualTask,
+            CatalogItemType::State => ObjectType::State,
         }
     }
 }
@@ -1005,6 +1010,7 @@ impl From<CatalogItemType> for mz_audit_log::ObjectType {
             CatalogItemType::Secret => mz_audit_log::ObjectType::Secret,
             CatalogItemType::Connection => mz_audit_log::ObjectType::Connection,
             CatalogItemType::ContinualTask => mz_audit_log::ObjectType::ContinualTask,
+            CatalogItemType::State => mz_audit_log::ObjectType::State,
         }
     }
 }
@@ -1533,6 +1539,7 @@ pub enum ObjectType {
     Func,
     ContinualTask,
     NetworkPolicy,
+    State,
 }
 
 impl ObjectType {
@@ -1556,6 +1563,7 @@ impl ObjectType {
             | ObjectType::ClusterReplica
             | ObjectType::Role
             | ObjectType::NetworkPolicy => false,
+            ObjectType::State => true,
         }
     }
 }
@@ -1581,6 +1589,7 @@ impl From<mz_sql_parser::ast::ObjectType> for ObjectType {
             mz_sql_parser::ast::ObjectType::Func => ObjectType::Func,
             mz_sql_parser::ast::ObjectType::ContinualTask => ObjectType::ContinualTask,
             mz_sql_parser::ast::ObjectType::NetworkPolicy => ObjectType::NetworkPolicy,
+            mz_sql_parser::ast::ObjectType::State => ObjectType::State,
         }
     }
 }
@@ -1604,6 +1613,7 @@ impl From<CommentObjectId> for ObjectType {
             CommentObjectId::Cluster(_) => ObjectType::Cluster,
             CommentObjectId::ClusterReplica(_) => ObjectType::ClusterReplica,
             CommentObjectId::ContinualTask(_) => ObjectType::ContinualTask,
+            CommentObjectId::State(_) => ObjectType::State,
             CommentObjectId::NetworkPolicy(_) => ObjectType::NetworkPolicy,
         }
     }
@@ -1629,6 +1639,7 @@ impl Display for ObjectType {
             ObjectType::Func => "FUNCTION",
             ObjectType::ContinualTask => "CONTINUAL TASK",
             ObjectType::NetworkPolicy => "NETWORK POLICY",
+            ObjectType::State => "STATE",
         })
     }
 }

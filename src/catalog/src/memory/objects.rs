@@ -2992,6 +2992,7 @@ impl CatalogEntry {
             Type => CommentObjectId::Type(self.id),
             Secret => CommentObjectId::Secret(self.id),
             ContinualTask => CommentObjectId::ContinualTask(self.id),
+            State => CommentObjectId::State(self.id),
         }
     }
 }

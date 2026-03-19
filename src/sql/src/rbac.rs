@@ -1685,7 +1685,7 @@ fn generate_read_privileges_inner(
                     privileges.push((SystemObjectId::Object(id.into()), AclMode::SELECT, role_id));
                     views.push((item.references().items().copied(), item.owner_id()));
                 }
-                CatalogItemType::Table | CatalogItemType::Source => {
+                CatalogItemType::Table | CatalogItemType::Source | CatalogItemType::State => {
                     privileges.push((SystemObjectId::Object(id.into()), AclMode::SELECT, role_id));
                 }
                 CatalogItemType::Type | CatalogItemType::Secret | CatalogItemType::Connection => {
@@ -1823,6 +1823,7 @@ pub const fn all_object_privileges(object_type: SystemObjectType) -> AclMode {
         SystemObjectType::Object(ObjectType::Schema) => USAGE_CREATE_ACL_MODE,
         SystemObjectType::Object(ObjectType::Func) => EMPTY_ACL_MODE,
         SystemObjectType::Object(ObjectType::ContinualTask) => AclMode::SELECT,
+        SystemObjectType::Object(ObjectType::State) => AclMode::SELECT,
         SystemObjectType::System => ALL_SYSTEM_PRIVILEGES,
     }
 }
@@ -1841,7 +1842,8 @@ const fn default_builtin_object_acl_mode(object_type: ObjectType) -> AclMode {
         | ObjectType::View
         | ObjectType::MaterializedView
         | ObjectType::Source
-        | ObjectType::ContinualTask => AclMode::SELECT,
+        | ObjectType::ContinualTask
+        | ObjectType::State => AclMode::SELECT,
         ObjectType::Type | ObjectType::Schema => AclMode::USAGE,
         ObjectType::Sink
         | ObjectType::Index

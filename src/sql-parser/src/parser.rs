@@ -5012,7 +5012,8 @@ impl<'a> Parser<'a> {
             | ObjectType::Type
             | ObjectType::Secret
             | ObjectType::Connection
-            | ObjectType::ContinualTask => {
+            | ObjectType::ContinualTask
+            | ObjectType::State => {
                 let names = self.parse_comma_separated(|parser| {
                     Ok(UnresolvedObjectName::Item(parser.parse_item_name()?))
                 })?;
@@ -5810,7 +5811,7 @@ impl<'a> Parser<'a> {
             ObjectType::NetworkPolicy => self
                 .parse_alter_network_policy()
                 .map_parser_err(StatementKind::AlterNetworkPolicy),
-            ObjectType::Func | ObjectType::Subsource => parser_err!(
+            ObjectType::Func | ObjectType::Subsource | ObjectType::State => parser_err!(
                 self,
                 self.peek_prev_pos(),
                 format!("Unsupported ALTER on {object_type}")
@@ -7392,7 +7393,8 @@ impl<'a> Parser<'a> {
             | ObjectType::Secret
             | ObjectType::Connection
             | ObjectType::Func
-            | ObjectType::ContinualTask => UnresolvedObjectName::Item(self.parse_item_name()?),
+            | ObjectType::ContinualTask
+            | ObjectType::State => UnresolvedObjectName::Item(self.parse_item_name()?),
             ObjectType::Role => UnresolvedObjectName::Role(self.parse_identifier()?),
             ObjectType::Cluster => UnresolvedObjectName::Cluster(self.parse_identifier()?),
             ObjectType::ClusterReplica => {
@@ -8216,7 +8218,7 @@ impl<'a> Parser<'a> {
                         on_object,
                     }
                 }
-                ObjectType::Func => {
+                ObjectType::Func | ObjectType::State => {
                     return parser_err!(
                         self,
                         self.peek_prev_pos(),
@@ -9662,7 +9664,8 @@ impl<'a> Parser<'a> {
             ObjectType::View
             | ObjectType::MaterializedView
             | ObjectType::Source
-            | ObjectType::ContinualTask => {
+            | ObjectType::ContinualTask
+            | ObjectType::State => {
                 parser_err!(
                     self,
                     self.peek_prev_pos(),

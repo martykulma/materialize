@@ -4367,6 +4367,7 @@ pub enum ObjectType {
     Subsource,
     ContinualTask,
     NetworkPolicy,
+    State,
 }
 
 impl ObjectType {
@@ -4383,7 +4384,8 @@ impl ObjectType {
             | ObjectType::Connection
             | ObjectType::Func
             | ObjectType::Subsource
-            | ObjectType::ContinualTask => true,
+            | ObjectType::ContinualTask
+            | ObjectType::State => true,
             ObjectType::Database
             | ObjectType::Schema
             | ObjectType::Cluster
@@ -4415,6 +4417,7 @@ impl AstDisplay for ObjectType {
             ObjectType::Subsource => "SUBSOURCE",
             ObjectType::ContinualTask => "CONTINUAL TASK",
             ObjectType::NetworkPolicy => "NETWORK POLICY",
+            ObjectType::State => "STATE",
         })
     }
 }
@@ -5756,6 +5759,7 @@ pub enum CommentObjectType<T: AstInfo> {
     Cluster { name: T::ClusterName },
     ClusterReplica { name: QualifiedReplica },
     ContinualTask { name: T::ItemName },
+    State { name: T::ItemName },
     NetworkPolicy { name: T::NetworkPolicyName },
 }
 
@@ -5830,6 +5834,10 @@ impl<T: AstInfo> AstDisplay for CommentObjectType<T> {
             }
             ContinualTask { name } => {
                 f.write_str("CONTINUAL TASK ");
+                f.write_node(name);
+            }
+            State { name } => {
+                f.write_str("STATE ");
                 f.write_node(name);
             }
             NetworkPolicy { name } => {

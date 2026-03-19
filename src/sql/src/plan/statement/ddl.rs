@@ -3243,7 +3243,8 @@ pub fn plan_create_continual_task(
         CatalogItemType::ContinualTask
         | CatalogItemType::Table
         | CatalogItemType::MaterializedView
-        | CatalogItemType::Source => {}
+        | CatalogItemType::Source
+        | CatalogItemType::State => {}
         CatalogItemType::Sink
         | CatalogItemType::View
         | CatalogItemType::Index
@@ -3582,7 +3583,7 @@ fn plan_sink(
     {
         use CatalogItemType::*;
         match from.item_type() {
-            Table | Source | MaterializedView | ContinualTask => {
+            Table | Source | MaterializedView | ContinualTask | State => {
                 if from.replacement_target().is_some() {
                     let name = scx.catalog.minimal_qualification(from.name());
                     return Err(PlanError::InvalidSinkFrom {
@@ -4302,7 +4303,7 @@ pub fn plan_create_index(
     {
         use CatalogItemType::*;
         match on.item_type() {
-            Table | Source | View | MaterializedView | ContinualTask => {
+            Table | Source | View | MaterializedView | ContinualTask | State => {
                 if on.replacement_target().is_some() {
                     sql_bail!(
                         "index cannot be created on {} because it is a replacement {}",
@@ -5877,7 +5878,8 @@ fn dependency_prevents_drop(object_type: ObjectType, dep: &dyn CatalogItem) -> b
             | CatalogItemType::Type
             | CatalogItemType::Secret
             | CatalogItemType::Connection
-            | CatalogItemType::ContinualTask => true,
+            | CatalogItemType::ContinualTask
+            | CatalogItemType::State => true,
             CatalogItemType::Index => false,
         },
     }
@@ -7776,7 +7778,8 @@ pub fn plan_comment(
         | com_ty @ CommentObjectType::Source { name }
         | com_ty @ CommentObjectType::Sink { name }
         | com_ty @ CommentObjectType::Secret { name }
-        | com_ty @ CommentObjectType::ContinualTask { name } => {
+        | com_ty @ CommentObjectType::ContinualTask { name }
+        | com_ty @ CommentObjectType::State { name } => {
             let item = scx.get_item_by_resolved_name(name)?;
             match (com_ty, item.item_type()) {
                 (CommentObjectType::Table { .. }, CatalogItemType::Table) => {
@@ -7808,6 +7811,9 @@ pub fn plan_comment(
                 }
                 (CommentObjectType::ContinualTask { .. }, CatalogItemType::ContinualTask) => {
                     (CommentObjectId::ContinualTask(item.id()), None)
+                }
+                (CommentObjectType::State { .. }, CatalogItemType::State) => {
+                    (CommentObjectId::State(item.id()), None)
                 }
                 (com_ty, cat_ty) => {
                     let expected_type = match com_ty {

@@ -202,6 +202,7 @@ impl RustType<crate::objects::CatalogItemType> for CatalogItemType {
             CatalogItemType::Secret => crate::objects::CatalogItemType::Secret,
             CatalogItemType::Connection => crate::objects::CatalogItemType::Connection,
             CatalogItemType::ContinualTask => crate::objects::CatalogItemType::ContinualTask,
+            CatalogItemType::State => crate::objects::CatalogItemType::State,
         }
     }
 
@@ -218,6 +219,7 @@ impl RustType<crate::objects::CatalogItemType> for CatalogItemType {
             crate::objects::CatalogItemType::Secret => CatalogItemType::Secret,
             crate::objects::CatalogItemType::Connection => CatalogItemType::Connection,
             crate::objects::CatalogItemType::ContinualTask => CatalogItemType::ContinualTask,
+            crate::objects::CatalogItemType::State => CatalogItemType::State,
             crate::objects::CatalogItemType::Unknown => {
                 return Err(TryFromProtoError::unknown_enum_variant("CatalogItemType"));
             }
@@ -246,6 +248,7 @@ impl RustType<crate::objects::ObjectType> for ObjectType {
             ObjectType::Func => crate::objects::ObjectType::Func,
             ObjectType::ContinualTask => crate::objects::ObjectType::ContinualTask,
             ObjectType::NetworkPolicy => crate::objects::ObjectType::NetworkPolicy,
+            ObjectType::State => crate::objects::ObjectType::State,
         }
     }
 
@@ -268,6 +271,7 @@ impl RustType<crate::objects::ObjectType> for ObjectType {
             crate::objects::ObjectType::Func => Ok(ObjectType::Func),
             crate::objects::ObjectType::ContinualTask => Ok(ObjectType::ContinualTask),
             crate::objects::ObjectType::NetworkPolicy => Ok(ObjectType::NetworkPolicy),
+            crate::objects::ObjectType::State => Ok(ObjectType::State),
             crate::objects::ObjectType::Unknown => Err(TryFromProtoError::unknown_enum_variant(
                 "ObjectType::Unknown",
             )),
@@ -428,6 +432,9 @@ impl RustType<crate::objects::CommentObject> for CommentObjectId {
             CommentObjectId::ContinualTask(global_id) => {
                 crate::objects::CommentObject::ContinualTask(global_id.into_proto())
             }
+            CommentObjectId::State(global_id) => {
+                crate::objects::CommentObject::State(global_id.into_proto())
+            }
             CommentObjectId::NetworkPolicy(network_policy_id) => {
                 crate::objects::CommentObject::NetworkPolicy(network_policy_id.into_proto())
             }
@@ -484,6 +491,9 @@ impl RustType<crate::objects::CommentObject> for CommentObjectId {
             }
             crate::objects::CommentObject::ContinualTask(item_id) => {
                 CommentObjectId::ContinualTask(item_id.into_rust()?)
+            }
+            crate::objects::CommentObject::State(item_id) => {
+                CommentObjectId::State(item_id.into_rust()?)
             }
             crate::objects::CommentObject::NetworkPolicy(global_id) => {
                 CommentObjectId::NetworkPolicy(global_id.into_rust()?)

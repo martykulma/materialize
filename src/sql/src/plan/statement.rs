@@ -488,7 +488,8 @@ impl PartialEq<ObjectType> for CatalogItemType {
             | (CatalogItemType::Index, ObjectType::Index)
             | (CatalogItemType::Type, ObjectType::Type)
             | (CatalogItemType::Secret, ObjectType::Secret)
-            | (CatalogItemType::Connection, ObjectType::Connection) => true,
+            | (CatalogItemType::Connection, ObjectType::Connection)
+            | (CatalogItemType::State, ObjectType::State) => true,
             (_, _) => false,
         }
     }

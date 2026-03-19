@@ -566,6 +566,7 @@ pub enum CommentObject {
     Type(CatalogItemId),
     Secret(CatalogItemId),
     ContinualTask(CatalogItemId),
+    State(CatalogItemId),
     Role(RoleId),
     Database(DatabaseId),
     Schema(ResolvedSchema),
@@ -2402,6 +2403,7 @@ pub mod audit_log_event_v1 {
         System = 16,
         ContinualTask = 17,
         NetworkPolicy = 18,
+        State = 19,
     }
 
     #[derive(
@@ -2893,6 +2895,7 @@ pub enum CatalogItemType {
     Secret = 9,
     Connection = 10,
     ContinualTask = 11,
+    State = 12,
 }
 
 #[derive(
@@ -2928,4 +2931,5 @@ pub enum ObjectType {
     Func = 15,
     ContinualTask = 16,
     NetworkPolicy = 17,
+    State = 18,
 }

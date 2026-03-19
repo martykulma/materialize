@@ -2780,7 +2780,7 @@ impl Coordinator {
                             let valid_id = id.is_user() || matches!(typ, Func);
                             valid_id
                         }
-                        Source | Secret | Connection => false,
+                        Source | Secret | Connection | State => false,
                         // Cannot select from sinks or indexes.
                         Sink | Index => unreachable!(),
                         Table => {

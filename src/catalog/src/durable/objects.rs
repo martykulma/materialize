@@ -1342,6 +1342,7 @@ pub fn item_type(create_sql: &str) -> CatalogItemType {
     match next_token {
         Some("TABLE") => CatalogItemType::Table,
         Some("SOURCE") | Some("SUBSOURCE") => CatalogItemType::Source,
+        Some("STATE") => CatalogItemType::State,
         Some("SINK") => CatalogItemType::Sink,
         Some("VIEW") => CatalogItemType::View,
         Some("MATERIALIZED") => {

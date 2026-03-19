@@ -1836,7 +1836,8 @@ impl CatalogState {
             | CatalogItemType::Index
             | CatalogItemType::Secret
             | CatalogItemType::Connection
-            | CatalogItemType::ContinualTask => schema.items[builtin.name()],
+            | CatalogItemType::ContinualTask
+            | CatalogItemType::State => schema.items[builtin.name()],
         }
     }
 
@@ -2654,7 +2655,8 @@ impl CatalogState {
             | CommentObjectId::Connection(id)
             | CommentObjectId::Type(id)
             | CommentObjectId::Secret(id)
-            | CommentObjectId::ContinualTask(id) => Some(*id),
+            | CommentObjectId::ContinualTask(id)
+            | CommentObjectId::State(id) => Some(*id),
             CommentObjectId::Role(_)
             | CommentObjectId::Database(_)
             | CommentObjectId::Schema(_)
@@ -2684,7 +2686,8 @@ impl CatalogState {
             | CommentObjectId::Connection(id)
             | CommentObjectId::Type(id)
             | CommentObjectId::Secret(id)
-            | CommentObjectId::ContinualTask(id) => {
+            | CommentObjectId::ContinualTask(id)
+            | CommentObjectId::State(id) => {
                 let item = self.get_entry(&id);
                 let name = self.resolve_full_name(item.name(), Some(conn_id));
                 name.to_string()
