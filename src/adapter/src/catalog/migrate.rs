@@ -748,6 +748,9 @@ fn rewrite_sources_to_tables(
                             CreateSubsourceOptionName::Progress => {
                                 panic!("progress option should not exist on this subsource")
                             }
+                            CreateSubsourceOptionName::State => {
+                                panic!("state option should not exist on this subsource")
+                            }
                             CreateSubsourceOptionName::ExternalReference => {
                                 unreachable!("This option is handled separately above.")
                             }

@@ -209,6 +209,8 @@ pub enum PurifiedStatement {
     PurifiedCreateSource {
         // The progress subsource, if we are offloading progress info to a separate relation
         create_progress_subsource_stmt: Option<CreateSubsourceStatement<Aug>>,
+        // State subsources for persisting source-specific operational state
+        create_state_subsource_stmts: Vec<CreateSubsourceStatement<Aug>>,
         create_source_stmt: CreateSourceStatement<Aug>,
         // Map of subsource names to external details
         subsources: BTreeMap<UnresolvedItemName, PurifiedSourceExport>,
@@ -1310,6 +1312,74 @@ async fn purify_create_source(
         None
     };
 
+    // Generate state subsource statements. Each source type declares its
+    // state collections via StateCollectionKey; we iterate them and create a
+    // CreateSubsourceStatement for each.
+    let state_descs: Vec<(
+        mz_storage_types::sources::StateCollectionId,
+        mz_repr::RelationDesc,
+    )> = match source_connection {
+        // TODO (maz) - currently not used
+        _ => vec![],
+    };
+
+    let mut create_state_subsource_stmts = Vec::with_capacity(state_descs.len());
+    for (state_id, state_desc) in &state_descs {
+        let (item, prefix) = source_name.0.split_last().unwrap();
+        let suffix = format!("_{}", state_id.0);
+        let item_name = Ident::try_generate_name(item.to_string(), &suffix, |candidate| {
+            let mut suggested_name = prefix.to_vec();
+            suggested_name.push(candidate.clone());
+
+            let partial = normalize::unresolved_item_name(UnresolvedItemName(suggested_name))?;
+            let qualified = scx.allocate_qualified_name(partial)?;
+            let item_exists = scx.catalog.get_item_by_name(&qualified).is_some();
+            let type_exists = scx.catalog.get_type_by_name(&qualified).is_some();
+            Ok::<_, PlanError>(!item_exists && !type_exists)
+        })?;
+
+        let mut full_name = prefix.to_vec();
+        full_name.push(item_name);
+        let full_name = normalize::unresolved_item_name(UnresolvedItemName(full_name))?;
+        let qualified_name = scx.allocate_qualified_name(full_name)?;
+        let full_name = scx.catalog.resolve_full_name(&qualified_name);
+        let subsource_name = UnresolvedItemName::from(full_name.clone());
+
+        let (columns, constraints) = scx.relation_desc_into_table_defs(state_desc)?;
+
+        let mut state_with_options: Vec<_> = with_options
+            .iter()
+            .filter_map(|opt| match opt.name {
+                CreateSourceOptionName::TimestampInterval => None,
+                CreateSourceOptionName::RetainHistory => Some(CreateSubsourceOption {
+                    name: CreateSubsourceOptionName::RetainHistory,
+                    value: opt.value.clone(),
+                }),
+            })
+            .collect();
+        state_with_options.push(CreateSubsourceOption {
+            name: CreateSubsourceOptionName::State,
+            value: Some(WithOptionValue::Value(Value::String(state_id.0.clone()))),
+        });
+
+        // Record the state subsource in the source statement so the catalog
+        // SQL contains `EXPOSE STATE <key> AS <name>`.
+        let key_ident = Ident::new_unchecked(state_id.0.clone());
+        state_subsources.insert(
+            key_ident,
+            DeferredItemName::Deferred(subsource_name.clone()),
+        );
+
+        create_state_subsource_stmts.push(CreateSubsourceStatement {
+            name: subsource_name,
+            columns,
+            of_source: None,
+            constraints,
+            if_not_exists: false,
+            with_options: state_with_options,
+        });
+    }
+
     purify_source_format(
         &catalog,
         format,
@@ -1321,6 +1391,7 @@ async fn purify_create_source(
 
     Ok(PurifiedStatement::PurifiedCreateSource {
         create_progress_subsource_stmt,
+        create_state_subsource_stmts,
         create_source_stmt,
         subsources: requested_subsource_map,
         available_source_references: retrieved_source_references.available_source_references(),

@@ -79,8 +79,8 @@ use mz_sql::session::vars::{
 use mz_sql::{plan, rbac};
 use mz_sql_parser::ast::display::AstDisplay;
 use mz_sql_parser::ast::{
-    ConnectionOption, ConnectionOptionName, CreateSourceConnection, DeferredItemName,
-    MySqlConfigOption, PgConfigOption, PgConfigOptionName, Statement, TransactionMode,
+    ConnectionOption, ConnectionOptionName, CreateSourceConnection, DeferredItemName, Ident,
+    MySqlConfigOption, PgConfigOption, PgConfigOptionName, Statement, TransactionMode, Value,
     WithOptionValue,
 };
 use mz_ssh_util::keys::SshKeyPairSet;
@@ -516,11 +516,12 @@ impl Coordinator {
         ctx: &ExecuteContext,
         params: Params,
         progress_stmt: Option<CreateSubsourceStatement<Aug>>,
+        state_stmts: Vec<CreateSubsourceStatement<Aug>>,
         mut source_stmt: mz_sql::ast::CreateSourceStatement<Aug>,
         subsources: BTreeMap<UnresolvedItemName, PurifiedSourceExport>,
         available_source_references: plan::SourceReferences,
     ) -> Result<(Plan, ResolvedIds), AdapterError> {
-        let mut create_source_plans = Vec::with_capacity(subsources.len() + 2);
+        let mut create_source_plans = Vec::with_capacity(subsources.len() + 2 + state_stmts.len());
 
         // 1. First plan the progress subsource, if any.
         if let Some(progress_stmt) = progress_stmt {
@@ -546,6 +547,44 @@ impl Coordinator {
             create_source_plans.push(progress_plan);
 
             source_stmt.progress_subsource = Some(DeferredItemName::Named(progress_subsource));
+        }
+
+        // 1b. Plan state subsources (same position as progress: before main source).
+        for state_stmt in state_stmts {
+            assert_none!(state_stmt.of_source);
+            // Extract the state collection key from the STATE option.
+            let state_key = state_stmt
+                .with_options
+                .iter()
+                .find_map(|opt| match &opt.name {
+                    CreateSubsourceOptionName::State => match &opt.value {
+                        Some(WithOptionValue::Value(Value::String(s))) => Some(s.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .expect("state collection has state option set");
+            let id_ts = self.get_catalog_write_ts().await;
+            let (item_id, global_id) = self.catalog().allocate_user_id(id_ts).await?;
+            let state_plan =
+                self.plan_subsource(ctx.session(), &params, state_stmt, item_id, global_id)?;
+            let state_full_name = self
+                .catalog()
+                .resolve_full_name(&state_plan.plan.name, None);
+            let state_item = ResolvedItemName::Item {
+                id: state_plan.item_id,
+                qualifiers: state_plan.plan.name.qualifiers.clone(),
+                full_name: state_full_name,
+                print_id: true,
+                version: RelationVersionSelector::Latest,
+            };
+            // Update the source statement so the catalog SQL references this
+            // state subsource by its resolved name + ID.
+            source_stmt.state_subsources.insert(
+                Ident::new_unchecked(state_key),
+                DeferredItemName::Named(state_item),
+            );
+            create_source_plans.push(state_plan);
         }
 
         let catalog = self.catalog().for_session(ctx.session());

@@ -1579,6 +1579,7 @@ fn plan_source_export_desc(
 generate_extracted_config!(
     CreateSubsourceOption,
     (Progress, bool, Default(false)),
+    (State, String),
     (ExternalReference, UnresolvedItemName),
     (RetainHistory, OptionalDuration),
     (TextColumns, Vec::<Ident>, Default(vec![])),
@@ -1601,6 +1602,7 @@ pub fn plan_create_subsource(
 
     let CreateSubsourceOptionExtracted {
         progress,
+        state,
         retain_history,
         external_reference,
         text_columns,
@@ -1613,9 +1615,10 @@ pub fn plan_create_subsource(
     // creating the AST for subsources as a response to CREATE SOURCE
     // statements, so this would fire in integration testing if we failed to
     // uphold it.
+    // Exactly one of: ingestion export (external_reference + of_source), progress, or state.
     assert!(
-        progress ^ (external_reference.is_some() && of_source.is_some()),
-        "CREATE SUBSOURCE statement must specify either PROGRESS or REFERENCES option"
+        progress ^ state.is_some() ^ (external_reference.is_some() && of_source.is_some()),
+        "CREATE SUBSOURCE statement must specify exactly one of PROGRESS, STATE, or REFERENCES option"
     );
 
     let desc = plan_source_export_desc(scx, name, columns, constraints)?;
@@ -1705,8 +1708,12 @@ pub fn plan_create_subsource(
         }
     } else if progress {
         DataSourceDesc::Progress
+    } else if state.is_some() {
+        DataSourceDesc::State
     } else {
-        panic!("subsources must specify one of `external_reference`, `progress`, or `references`")
+        panic!(
+            "subsources must specify one of `external_reference`, `progress`, `state`, or `references`"
+        )
     };
 
     let if_not_exists = *if_not_exists;

@@ -1143,6 +1143,9 @@ impl_display!(ExternalReferences);
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CreateSubsourceOptionName {
     Progress,
+    /// Marks this subsource as a state collection. The value is the state
+    /// collection key (e.g., `"errors"`, `"timeline_history"`).
+    State,
     /// Tracks which item this subsource references in the primary source.
     ExternalReference,
     /// The `RETAIN HISTORY` option
@@ -1160,6 +1163,7 @@ impl AstDisplay for CreateSubsourceOptionName {
     fn fmt<W: fmt::Write>(&self, f: &mut AstFormatter<W>) {
         f.write_str(match self {
             CreateSubsourceOptionName::Progress => "PROGRESS",
+            CreateSubsourceOptionName::State => "STATE",
             CreateSubsourceOptionName::ExternalReference => "EXTERNAL REFERENCE",
             CreateSubsourceOptionName::RetainHistory => "RETAIN HISTORY",
             CreateSubsourceOptionName::TextColumns => "TEXT COLUMNS",
@@ -1178,6 +1182,7 @@ impl WithOptionName for CreateSubsourceOptionName {
     fn redact_value(&self) -> bool {
         match self {
             CreateSubsourceOptionName::Progress
+            | CreateSubsourceOptionName::State
             | CreateSubsourceOptionName::ExternalReference
             | CreateSubsourceOptionName::RetainHistory
             | CreateSubsourceOptionName::Details

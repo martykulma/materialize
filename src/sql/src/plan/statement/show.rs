@@ -1272,6 +1272,7 @@ fn humanize_sql_for_show_create(
                     CreateSubsourceOptionName::Details => false,
                     CreateSubsourceOptionName::ExternalReference => true,
                     CreateSubsourceOptionName::Progress => true,
+                    CreateSubsourceOptionName::State => true,
                 }
             });
         }

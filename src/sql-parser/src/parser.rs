@@ -2924,6 +2924,10 @@ impl<'a> Parser<'a> {
                 name: CreateSubsourceOptionName::Progress,
                 value: self.parse_optional_option_value()?,
             },
+            STATE => CreateSubsourceOption {
+                name: CreateSubsourceOptionName::State,
+                value: self.parse_optional_option_value()?,
+            },
             ref keyword @ (TEXT | EXCLUDE | IGNORE) => {
                 self.expect_keyword(COLUMNS)?;
 
