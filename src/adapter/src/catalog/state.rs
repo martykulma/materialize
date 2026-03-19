@@ -1232,7 +1232,7 @@ impl CatalogState {
                         data_config,
                     },
                     mz_sql::plan::DataSourceDesc::Progress => DataSourceDesc::Progress,
-                    mz_sql::plan::DataSourceDesc::State => DataSourceDesc::State,
+                    mz_sql::plan::DataSourceDesc::State { key } => DataSourceDesc::State { key },
                     mz_sql::plan::DataSourceDesc::Webhook {
                         validate_using,
                         body_format,
@@ -2622,7 +2622,8 @@ impl CatalogState {
                                 | DataSourceDesc::OldSyntaxIngestion { .. }
                                 | DataSourceDesc::Introspection(_)
                                 | DataSourceDesc::Progress
-                                | DataSourceDesc::Catalog,
+                                | DataSourceDesc::Catalog
+                                | DataSourceDesc::State { .. },
                             ..
                         } => {
                             unreachable!(

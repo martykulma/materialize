@@ -341,7 +341,7 @@ impl Coordinator {
                 }
                 plan::DataSourceDesc::IngestionExport { .. }
                 | plan::DataSourceDesc::Progress
-                | plan::DataSourceDesc::State => {}
+                | plan::DataSourceDesc::State { .. } => {}
             }
 
             // Attempt to reduce the `CHECK` expression, we timeout if this takes too long.

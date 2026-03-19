@@ -3461,9 +3461,17 @@ where
 
         let remap_collection = self.collection(ingestion_description.remap_collection_id)?;
 
+        // Enrich state collections with their metadata
+        let mut state_collections = BTreeMap::new();
+        for (state_id, (gid, _)) in &ingestion_description.state_collections {
+            let meta = self.collection(*gid)?.collection_metadata.clone();
+            state_collections.insert(state_id.clone(), (*gid, meta));
+        }
+
         let description = IngestionDescription::<CollectionMetadata> {
             source_exports,
             remap_metadata: remap_collection.collection_metadata.clone(),
+            state_collections,
             // The rest of the fields are identical
             desc: ingestion_description.desc.clone(),
             instance_id: ingestion_description.instance_id,

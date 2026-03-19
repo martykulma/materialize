@@ -118,7 +118,7 @@ use mz_storage_types::sources::{
     GenericSourceConnection, MySqlSourceExportDetails, PostgresSourceExportDetails,
     ProtoSourceExportStatementDetails, SourceConnection, SourceDesc, SourceExportDataConfig,
     SourceExportDetails, SourceExportStatementDetails, SqlServerSourceConnection,
-    SqlServerSourceExtras, Timeline,
+    SqlServerSourceExtras, StateCollectionId, Timeline,
 };
 use prost::Message;
 
@@ -1708,8 +1708,10 @@ pub fn plan_create_subsource(
         }
     } else if progress {
         DataSourceDesc::Progress
-    } else if state.is_some() {
-        DataSourceDesc::State
+    } else if let Some(key) = state {
+        DataSourceDesc::State {
+            key: StateCollectionId(key),
+        }
     } else {
         panic!(
             "subsources must specify one of `external_reference`, `progress`, `state`, or `references`"

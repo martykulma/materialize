@@ -67,7 +67,7 @@ use mz_storage_types::connections::{
 use mz_storage_types::instances::StorageInstanceId;
 use mz_storage_types::sinks::{S3SinkFormat, SinkEnvelope, StorageSinkConnection};
 use mz_storage_types::sources::{
-    SourceDesc, SourceExportDataConfig, SourceExportDetails, Timeline,
+    SourceDesc, SourceExportDataConfig, SourceExportDetails, StateCollectionId, Timeline,
 };
 use proptest_derive::Arbitrary;
 use serde::{Deserialize, Serialize};
@@ -1548,8 +1548,9 @@ pub enum DataSourceDesc {
     },
     /// Receives data from the source's reclocking/remapping operations.
     Progress,
-    /// Receives source specific data.
-    State,
+    /// Receives source specific data. The key identifies which state
+    /// collection this is (e.g., "errors", "timeline_history").
+    State { key: StateCollectionId },
     /// Receives data from HTTP post requests.
     Webhook {
         validate_using: Option<WebhookValidation>,

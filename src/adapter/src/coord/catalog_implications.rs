@@ -1232,11 +1232,13 @@ impl Coordinator {
                 let desc = desc.into_inline_connection(self.catalog().state());
                 let item_global_id = self.catalog().get_entry(&item_id).latest_global_id();
 
-                let ingestion = mz_storage_types::sources::IngestionDescription::new(
+                let mut ingestion = mz_storage_types::sources::IngestionDescription::new(
                     desc,
                     cluster_id,
                     item_global_id,
                 );
+                ingestion.state_collections =
+                    super::discover_state_collections(self.catalog(), &source.resolved_ids);
 
                 DataSource::Ingestion(ingestion)
             }
@@ -1292,7 +1294,7 @@ impl Coordinator {
                 }
             }
             DataSourceDesc::Progress => DataSource::Progress,
-            DataSourceDesc::State => DataSource::State,
+            DataSourceDesc::State { .. } => DataSource::State,
             DataSourceDesc::Webhook { .. } => DataSource::Webhook,
             DataSourceDesc::Introspection(_) | DataSourceDesc::Catalog => {
                 unreachable!("cannot create sources with internal data sources")

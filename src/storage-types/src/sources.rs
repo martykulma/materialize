@@ -99,6 +99,10 @@ pub struct IngestionDescription<S: 'static = (), C: ConnectionAccess = InlinedCo
     pub remap_collection_id: GlobalId,
     /// The storage metadata for the remap/progress collection
     pub remap_metadata: S,
+    /// State collections keyed by their StateCollectionId.
+    /// Each entry maps a state collection key (e.g. "errors") to its GlobalId
+    /// and storage metadata.
+    pub state_collections: BTreeMap<StateCollectionId, (GlobalId, S)>,
 }
 
 impl IngestionDescription {
@@ -113,6 +117,7 @@ impl IngestionDescription {
             source_exports: BTreeMap::new(),
             instance_id,
             remap_collection_id,
+            state_collections: BTreeMap::new(),
         }
     }
 }
@@ -131,12 +136,19 @@ impl<S> IngestionDescription<S> {
             source_exports,
             instance_id: _,
             remap_collection_id,
+            state_collections,
         } = &self;
 
         source_exports
             .keys()
             .copied()
             .chain(std::iter::once(*remap_collection_id))
+            .chain(state_collections.values().map(|(id, _)| *id))
+    }
+
+    /// Look up a state collection by a typed key.
+    pub fn get_state_collection<K: StateCollectionKey>(&self, key: &K) -> Option<&(GlobalId, S)> {
+        self.state_collections.get(&key.id())
     }
 }
 
@@ -155,6 +167,7 @@ impl<S: Debug + Eq + PartialEq + AlterCompatible> AlterCompatible for IngestionD
             source_exports,
             instance_id,
             remap_collection_id,
+            state_collections,
         } = self;
 
         let compatibility_checks = [
@@ -198,6 +211,10 @@ impl<S: Debug + Eq + PartialEq + AlterCompatible> AlterCompatible for IngestionD
                 remap_collection_id == &other.remap_collection_id,
                 "remap_collection_id",
             ),
+            (
+                state_collections == &other.state_collections,
+                "state_collections",
+            ),
         ];
         for (compatible, field) in compatibility_checks {
             if !compatible {
@@ -225,6 +242,7 @@ impl<R: ConnectionResolver> IntoInlineConnection<IngestionDescription, R>
             source_exports,
             instance_id,
             remap_collection_id,
+            state_collections,
         } = self;
 
         IngestionDescription {
@@ -233,6 +251,7 @@ impl<R: ConnectionResolver> IntoInlineConnection<IngestionDescription, R>
             source_exports,
             instance_id,
             remap_collection_id,
+            state_collections,
         }
     }
 }

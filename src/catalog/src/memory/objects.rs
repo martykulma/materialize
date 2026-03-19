@@ -63,7 +63,7 @@ use mz_storage_types::sinks::{SinkEnvelope, StorageSinkConnection};
 use mz_storage_types::sources::load_generator::LoadGenerator;
 use mz_storage_types::sources::{
     GenericSourceConnection, SourceConnection, SourceDesc, SourceEnvelope, SourceExportDataConfig,
-    SourceExportDetails, Timeline,
+    SourceExportDetails, StateCollectionId, Timeline,
 };
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Serialize};
@@ -983,7 +983,8 @@ pub enum DataSourceDesc {
     /// Receives data from the source's reclocking/remapping operations.
     Progress,
     /// Receives state/checkpoint data from the source.
-    State,
+    /// The key identifies which state collection this is.
+    State { key: StateCollectionId },
     /// Receives data from HTTP requests.
     Webhook {
         /// Optional components used to validation a webhook request.
@@ -1030,7 +1031,7 @@ impl DataSourceDesc {
             | DataSourceDesc::Webhook { .. }
             | DataSourceDesc::Progress
             | DataSourceDesc::Catalog
-            | DataSourceDesc::State => (None, None),
+            | DataSourceDesc::State { .. } => (None, None),
         }
     }
 
@@ -1079,7 +1080,7 @@ impl DataSourceDesc {
             | DataSourceDesc::Webhook { .. }
             | DataSourceDesc::Progress
             | DataSourceDesc::Catalog
-            | DataSourceDesc::State => None,
+            | DataSourceDesc::State { .. } => None,
         }
     }
 }
@@ -1152,12 +1153,12 @@ impl Source {
                     );
                     DataSourceDesc::Progress
                 }
-                mz_sql::plan::DataSourceDesc::State => {
+                mz_sql::plan::DataSourceDesc::State { key } => {
                     assert!(
                         plan.in_cluster.is_none(),
                         "subsources must not have a host config or cluster_id defined"
                     );
-                    DataSourceDesc::State
+                    DataSourceDesc::State { key }
                 }
                 mz_sql::plan::DataSourceDesc::IngestionExport {
                     ingestion_id,
@@ -1214,7 +1215,7 @@ impl Source {
             DataSourceDesc::Ingestion { desc, .. }
             | DataSourceDesc::OldSyntaxIngestion { desc, .. } => desc.connection.name(),
             DataSourceDesc::Progress => "progress",
-            DataSourceDesc::State => "state",
+            DataSourceDesc::State { .. } => "state",
             DataSourceDesc::IngestionExport { .. } => "subsource",
             DataSourceDesc::Introspection(_) | DataSourceDesc::Catalog => "source",
             DataSourceDesc::Webhook { .. } => "webhook",
@@ -1231,7 +1232,7 @@ impl Source {
             | DataSourceDesc::Webhook { .. }
             | DataSourceDesc::Progress
             | DataSourceDesc::Catalog
-            | DataSourceDesc::State => None,
+            | DataSourceDesc::State { .. } => None,
         }
     }
 
@@ -1280,7 +1281,7 @@ impl Source {
             DataSourceDesc::Introspection(_)
             | DataSourceDesc::Progress
             | DataSourceDesc::Catalog
-            | DataSourceDesc::State => 0,
+            | DataSourceDesc::State { .. } => 0,
         }
     }
 }
@@ -1857,7 +1858,7 @@ impl CatalogItem {
                 | DataSourceDesc::Webhook { .. }
                 | DataSourceDesc::Progress
                 | DataSourceDesc::Catalog
-                | DataSourceDesc::State => Ok(None),
+                | DataSourceDesc::State { .. } => Ok(None),
             },
             _ => Err(SqlCatalogError::UnexpectedType {
                 name: entry.name().item.to_string(),
@@ -1883,7 +1884,7 @@ impl CatalogItem {
         matches!(
             self,
             CatalogItem::Source(Source {
-                data_source: DataSourceDesc::State,
+                data_source: DataSourceDesc::State { .. },
                 ..
             })
         )
@@ -2429,7 +2430,7 @@ impl CatalogItem {
                 DataSourceDesc::Introspection(_)
                 | DataSourceDesc::Progress
                 | DataSourceDesc::Catalog
-                | DataSourceDesc::State => None,
+                | DataSourceDesc::State { .. } => None,
             },
             CatalogItem::Sink(sink) => Some(sink.cluster_id),
             CatalogItem::ContinualTask(ct) => Some(ct.cluster_id),
@@ -2844,7 +2845,7 @@ impl CatalogEntry {
                 | DataSourceDesc::Introspection(_)
                 | DataSourceDesc::Progress
                 | DataSourceDesc::Webhook { .. }
-                | DataSourceDesc::State
+                | DataSourceDesc::State { .. }
                 | DataSourceDesc::Catalog => None,
             },
             CatalogItem::Table(_)

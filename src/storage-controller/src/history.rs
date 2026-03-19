@@ -321,6 +321,7 @@ mod tests {
             source_exports,
             instance_id: StorageInstanceId::system(0).expect("0 is a valid ID"),
             remap_collection_id: GlobalId::User(remap_collection_id),
+            state_collections: BTreeMap::new(),
         }
     }
 

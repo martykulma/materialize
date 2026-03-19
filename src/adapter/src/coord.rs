@@ -102,7 +102,7 @@ use mz_catalog::durable::{AuditLogIterator, OpenableDurableCatalogState};
 use mz_catalog::expr_cache::{GlobalExpressions, LocalExpressions};
 use mz_catalog::memory::objects::{
     CatalogEntry, CatalogItem, ClusterReplicaProcessStatus, ClusterVariantManaged, Connection,
-    DataSourceDesc, StateDiff, StateUpdate, StateUpdateKind, Table, TableDataSource,
+    DataSourceDesc, Source, StateDiff, StateUpdate, StateUpdateKind, Table, TableDataSource,
 };
 use mz_cloud_resources::{CloudResourceController, VpcEndpointConfig, VpcEndpointEvent};
 use mz_compute_client::as_of_selection;
@@ -161,7 +161,7 @@ use mz_storage_types::connections::inline::{IntoInlineConnection, ReferencedConn
 use mz_storage_types::read_holds::ReadHold;
 use mz_storage_types::sinks::{S3SinkFormat, StorageSinkDesc};
 use mz_storage_types::sources::kafka::KAFKA_PROGRESS_DESC;
-use mz_storage_types::sources::{IngestionDescription, SourceExport, Timeline};
+use mz_storage_types::sources::{IngestionDescription, SourceExport, StateCollectionId, Timeline};
 use mz_timestamp_oracle::{TimestampOracleConfig, WriteTimestamp};
 use mz_transform::dataflow::DataflowMetainfo;
 use opentelemetry::trace::TraceContextExt;
@@ -2850,12 +2850,15 @@ impl Coordinator {
         let source_desc = |object_id: GlobalId,
                            data_source: &DataSourceDesc,
                            desc: &RelationDesc,
-                           timeline: &Timeline| {
+                           timeline: &Timeline,
+                           resolved_ids: &ResolvedIds| {
             let data_source = match data_source.clone() {
                 // Re-announce the source description.
                 DataSourceDesc::Ingestion { desc, cluster_id } => {
                     let desc = desc.into_inline_connection(catalog.state());
-                    let ingestion = IngestionDescription::new(desc, cluster_id, object_id);
+                    let mut ingestion = IngestionDescription::new(desc, cluster_id, object_id);
+                    ingestion.state_collections = discover_state_collections(catalog, resolved_ids);
+
                     DataSource::Ingestion(ingestion)
                 }
                 DataSourceDesc::OldSyntaxIngestion {
@@ -2900,7 +2903,7 @@ impl Coordinator {
                 }
                 DataSourceDesc::Webhook { .. } => DataSource::Webhook,
                 DataSourceDesc::Progress => DataSource::Progress,
-                DataSourceDesc::State => DataSource::State,
+                DataSourceDesc::State { .. } => DataSource::State,
                 DataSourceDesc::Introspection(introspection) => {
                     DataSource::Introspection(introspection)
                 }
@@ -2928,6 +2931,7 @@ impl Coordinator {
                             &source.data_source,
                             &source.desc,
                             &source.timeline,
+                            &source.resolved_ids,
                         ),
                     ));
                 }
@@ -2965,6 +2969,7 @@ impl Coordinator {
                                             data_source_desc,
                                             &desc,
                                             timeline,
+                                            &table.resolved_ids,
                                         ),
                                     )
                                 });
@@ -4207,6 +4212,28 @@ impl Coordinator {
             })
             .sum()
     }
+}
+
+/// Discover state collections among a source's resolved dependencies.
+///
+/// Iterates `resolved_ids` to find catalog entries that are state subsources
+/// and returns a map suitable for populating `IngestionDescription::state_collections`.
+pub(super) fn discover_state_collections(
+    catalog: &Catalog,
+    resolved_ids: &ResolvedIds,
+) -> BTreeMap<StateCollectionId, (GlobalId, ())> {
+    let mut state_collections = BTreeMap::new();
+    for dep_id in resolved_ids.items() {
+        let dep_entry = catalog.get_entry(dep_id);
+        if let CatalogItem::Source(Source {
+            data_source: DataSourceDesc::State { key },
+            ..
+        }) = dep_entry.item()
+        {
+            state_collections.insert(key.clone(), (dep_entry.latest_global_id(), ()));
+        }
+    }
+    state_collections
 }
 
 #[cfg(test)]
