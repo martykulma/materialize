@@ -155,6 +155,7 @@ pub fn describe(
         Statement::CreateWebhookSource(stmt) => ddl::describe_create_webhook_source(&scx, stmt)?,
         Statement::CreateSource(stmt) => ddl::describe_create_source(&scx, stmt)?,
         Statement::CreateSubsource(stmt) => ddl::describe_create_subsource(&scx, stmt)?,
+        Statement::CreateState(stmt) => ddl::describe_create_state(&scx, stmt)?,
         Statement::CreateTable(stmt) => ddl::describe_create_table(&scx, stmt)?,
         Statement::CreateTableFromSource(stmt) => {
             ddl::describe_create_table_from_source(&scx, stmt)?
@@ -354,6 +355,7 @@ pub fn plan(
         Statement::CreateWebhookSource(stmt) => ddl::plan_create_webhook_source(scx, stmt),
         Statement::CreateSource(stmt) => ddl::plan_create_source(scx, stmt),
         Statement::CreateSubsource(stmt) => ddl::plan_create_subsource(scx, stmt),
+        Statement::CreateState(stmt) => ddl::plan_create_state(scx, stmt),
         Statement::CreateTable(stmt) => ddl::plan_create_table(scx, stmt),
         Statement::CreateTableFromSource(stmt) => ddl::plan_create_table_from_source(scx, stmt),
         Statement::CreateType(stmt) => ddl::plan_create_type(scx, stmt),
@@ -1079,6 +1081,7 @@ impl<T: mz_sql_parser::ast::AstInfo> From<&Statement<T>> for StatementClassifica
             Statement::CreateWebhookSource(_) => DDL,
             Statement::CreateSource(_) => DDL,
             Statement::CreateSubsource(_) => DDL,
+            Statement::CreateState(_) => DDL,
             Statement::CreateTable(_) => DDL,
             Statement::CreateTableFromSource(_) => DDL,
             Statement::CreateType(_) => DDL,

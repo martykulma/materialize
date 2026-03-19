@@ -23,11 +23,11 @@ use mz_sql_parser::ast::visit_mut::{self, VisitMut};
 use mz_sql_parser::ast::{
     ContinualTaskStmt, CreateConnectionStatement, CreateContinualTaskStatement,
     CreateContinualTaskSugar, CreateIndexStatement, CreateMaterializedViewStatement,
-    CreateSecretStatement, CreateSinkStatement, CreateSourceStatement, CreateSubsourceStatement,
-    CreateTableFromSourceStatement, CreateTableStatement, CreateTypeStatement, CreateViewStatement,
-    CreateWebhookSourceStatement, CteBlock, Function, FunctionArgs, Ident, IfExistsBehavior,
-    MutRecBlock, Op, Query, Statement, TableFactor, TableFromSourceColumns, UnresolvedItemName,
-    UnresolvedSchemaName, Value, ViewDefinition,
+    CreateSecretStatement, CreateSinkStatement, CreateSourceStatement, CreateStateStatement,
+    CreateSubsourceStatement, CreateTableFromSourceStatement, CreateTableStatement,
+    CreateTypeStatement, CreateViewStatement, CreateWebhookSourceStatement, CteBlock, Function,
+    FunctionArgs, Ident, IfExistsBehavior, MutRecBlock, Op, Query, Statement, TableFactor,
+    TableFromSourceColumns, UnresolvedItemName, UnresolvedSchemaName, Value, ViewDefinition,
 };
 
 use crate::names::{Aug, FullItemName, PartialItemName, PartialSchemaName, RawDatabaseSpecifier};
@@ -274,7 +274,7 @@ pub fn create_statement(
             with_options: _,
             external_references: _,
             progress_subsource: _,
-            state_subsources: _,
+            state_collections: _,
         }) => {
             *name = allocate_name(name)?;
             *if_not_exists = false;
@@ -285,6 +285,24 @@ pub fn create_statement(
             columns,
             constraints: _,
             of_source: _,
+            if_not_exists,
+            with_options: _,
+        }) => {
+            *name = allocate_name(name)?;
+            let mut normalizer = QueryNormalizer::new();
+            for c in columns {
+                normalizer.visit_column_def_mut(c);
+            }
+            if let Some(err) = normalizer.err {
+                return Err(err);
+            }
+            *if_not_exists = false;
+        }
+
+        Statement::CreateState(CreateStateStatement {
+            name,
+            columns,
+            constraints: _,
             if_not_exists,
             with_options: _,
         }) => {

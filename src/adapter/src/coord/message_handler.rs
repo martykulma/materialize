@@ -456,7 +456,7 @@ impl Coordinator {
         let plan = match purified_statement {
             PurifiedStatement::PurifiedCreateSource {
                 create_progress_subsource_stmt,
-                create_state_subsource_stmts,
+                create_state_stmts,
                 create_source_stmt,
                 subsources,
                 available_source_references,
@@ -465,7 +465,7 @@ impl Coordinator {
                     &ctx,
                     params,
                     create_progress_subsource_stmt,
-                    create_state_subsource_stmts,
+                    create_state_stmts,
                     create_source_stmt,
                     subsources,
                     available_source_references,

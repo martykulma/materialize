@@ -539,6 +539,7 @@ impl CatalogState {
                         | Statement::CreateSubsource(ast::CreateSubsourceStatement {
                             name, ..
                         })
+                        | Statement::CreateState(ast::CreateStateStatement { name, .. })
                         | Statement::CreateSink(ast::CreateSinkStatement {
                             name: Some(name),
                             ..

@@ -97,6 +97,7 @@ impl Pretty {
             Statement::CreateConnection(v) => self.doc_create_connection(v),
             Statement::CreateSink(v) => self.doc_create_sink(v),
             Statement::CreateSubsource(v) => self.doc_create_subsource(v),
+            Statement::CreateState(v) => self.doc_display(v, "statement"),
             Statement::CreateCluster(v) => self.doc_create_cluster(v),
             Statement::CreateClusterReplica(v) => self.doc_create_cluster_replica(v),
             Statement::CreateNetworkPolicy(v) => self.doc_create_network_policy(v),

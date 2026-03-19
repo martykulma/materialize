@@ -52,6 +52,7 @@ pub enum Statement<T: AstInfo> {
     CreateWebhookSource(CreateWebhookSourceStatement<T>),
     CreateSource(CreateSourceStatement<T>),
     CreateSubsource(CreateSubsourceStatement<T>),
+    CreateState(CreateStateStatement<T>),
     CreateSink(CreateSinkStatement<T>),
     CreateView(CreateViewStatement<T>),
     CreateMaterializedView(CreateMaterializedViewStatement<T>),
@@ -131,6 +132,7 @@ impl<T: AstInfo> AstDisplay for Statement<T> {
             Statement::CreateWebhookSource(stmt) => f.write_node(stmt),
             Statement::CreateSource(stmt) => f.write_node(stmt),
             Statement::CreateSubsource(stmt) => f.write_node(stmt),
+            Statement::CreateState(stmt) => f.write_node(stmt),
             Statement::CreateSink(stmt) => f.write_node(stmt),
             Statement::CreateView(stmt) => f.write_node(stmt),
             Statement::CreateMaterializedView(stmt) => f.write_node(stmt),
@@ -213,6 +215,7 @@ pub fn statement_kind_label_value(kind: StatementKind) -> &'static str {
         StatementKind::CreateWebhookSource => "create_webhook",
         StatementKind::CreateSource => "create_source",
         StatementKind::CreateSubsource => "create_subsource",
+        StatementKind::CreateState => "create_state",
         StatementKind::CreateSink => "create_sink",
         StatementKind::CreateView => "create_view",
         StatementKind::CreateMaterializedView => "create_materialized_view",
@@ -1021,7 +1024,7 @@ pub struct CreateSourceStatement<T: AstInfo> {
     /// State collections keyed by their identifier (e.g., `errors`,
     /// `timeline_history`). Populated during purification and serialized into
     /// the catalog's `create_sql` as `EXPOSE STATE <key> AS <name>`.
-    pub state_subsources: BTreeMap<Ident, DeferredItemName<T>>,
+    pub state_collections: BTreeMap<Ident, DeferredItemName<T>>,
 }
 
 impl<T: AstInfo> AstDisplay for CreateSourceStatement<T> {
@@ -1074,7 +1077,7 @@ impl<T: AstInfo> AstDisplay for CreateSourceStatement<T> {
             f.write_node(progress);
         }
 
-        for (key, name) in &self.state_subsources {
+        for (key, name) in &self.state_collections {
             f.write_str(" EXPOSE STATE ");
             f.write_node(key);
             f.write_str(" AS ");
@@ -1143,9 +1146,6 @@ impl_display!(ExternalReferences);
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CreateSubsourceOptionName {
     Progress,
-    /// Marks this subsource as a state collection. The value is the state
-    /// collection key (e.g., `"errors"`, `"timeline_history"`).
-    State,
     /// Tracks which item this subsource references in the primary source.
     ExternalReference,
     /// The `RETAIN HISTORY` option
@@ -1163,7 +1163,6 @@ impl AstDisplay for CreateSubsourceOptionName {
     fn fmt<W: fmt::Write>(&self, f: &mut AstFormatter<W>) {
         f.write_str(match self {
             CreateSubsourceOptionName::Progress => "PROGRESS",
-            CreateSubsourceOptionName::State => "STATE",
             CreateSubsourceOptionName::ExternalReference => "EXTERNAL REFERENCE",
             CreateSubsourceOptionName::RetainHistory => "RETAIN HISTORY",
             CreateSubsourceOptionName::TextColumns => "TEXT COLUMNS",
@@ -1182,7 +1181,6 @@ impl WithOptionName for CreateSubsourceOptionName {
     fn redact_value(&self) -> bool {
         match self {
             CreateSubsourceOptionName::Progress
-            | CreateSubsourceOptionName::State
             | CreateSubsourceOptionName::ExternalReference
             | CreateSubsourceOptionName::RetainHistory
             | CreateSubsourceOptionName::Details
@@ -1241,6 +1239,75 @@ impl<T: AstInfo> AstDisplay for CreateSubsourceStatement<T> {
     }
 }
 impl_display_t!(CreateSubsourceStatement);
+
+/// An option in a `CREATE STATE` statement.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CreateStateOptionName {
+    /// The state collection key (e.g., "errors", "timeline_history").
+    Key,
+    /// The `RETAIN HISTORY` option.
+    RetainHistory,
+}
+
+impl AstDisplay for CreateStateOptionName {
+    fn fmt<W: fmt::Write>(&self, f: &mut AstFormatter<W>) {
+        f.write_str(match self {
+            CreateStateOptionName::Key => "KEY",
+            CreateStateOptionName::RetainHistory => "RETAIN HISTORY",
+        })
+    }
+}
+impl_display!(CreateStateOptionName);
+
+impl WithOptionName for CreateStateOptionName {
+    fn redact_value(&self) -> bool {
+        match self {
+            CreateStateOptionName::Key | CreateStateOptionName::RetainHistory => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CreateStateOption<T: AstInfo> {
+    pub name: CreateStateOptionName,
+    pub value: Option<WithOptionValue<T>>,
+}
+impl_display_for_with_option!(CreateStateOption);
+
+/// `CREATE STATE`
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CreateStateStatement<T: AstInfo> {
+    pub name: UnresolvedItemName,
+    pub columns: Vec<ColumnDef<T>>,
+    pub constraints: Vec<TableConstraint<T>>,
+    pub if_not_exists: bool,
+    pub with_options: Vec<CreateStateOption<T>>,
+}
+
+impl<T: AstInfo> AstDisplay for CreateStateStatement<T> {
+    fn fmt<W: fmt::Write>(&self, f: &mut AstFormatter<W>) {
+        f.write_str("CREATE STATE ");
+        if self.if_not_exists {
+            f.write_str("IF NOT EXISTS ");
+        }
+
+        f.write_node(&self.name);
+        f.write_str(" (");
+        f.write_node(&display::comma_separated(&self.columns));
+        if !self.constraints.is_empty() {
+            f.write_str(", ");
+            f.write_node(&display::comma_separated(&self.constraints));
+        }
+        f.write_str(")");
+
+        if !self.with_options.is_empty() {
+            f.write_str(" WITH (");
+            f.write_node(&display::comma_separated(&self.with_options));
+            f.write_str(")");
+        }
+    }
+}
+impl_display_t!(CreateStateStatement);
 
 /// An option in a `CREATE SINK` statement.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

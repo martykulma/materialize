@@ -1943,6 +1943,9 @@ impl<'a> Parser<'a> {
         } else if self.peek_keyword(SUBSOURCE) {
             self.parse_create_subsource()
                 .map_parser_err(StatementKind::CreateSubsource)
+        } else if self.peek_keyword(STATE) {
+            self.parse_create_state()
+                .map_parser_err(StatementKind::CreateState)
         } else if self.peek_keyword(TABLE)
             || self.peek_keywords(&[TEMP, TABLE])
             || self.peek_keywords(&[TEMPORARY, TABLE])
@@ -2924,10 +2927,6 @@ impl<'a> Parser<'a> {
                 name: CreateSubsourceOptionName::Progress,
                 value: self.parse_optional_option_value()?,
             },
-            STATE => CreateSubsourceOption {
-                name: CreateSubsourceOptionName::State,
-                value: self.parse_optional_option_value()?,
-            },
             ref keyword @ (TEXT | EXCLUDE | IGNORE) => {
                 self.expect_keyword(COLUMNS)?;
 
@@ -2959,6 +2958,49 @@ impl<'a> Parser<'a> {
                 self.expect_keyword(HISTORY)?;
                 CreateSubsourceOption {
                     name: CreateSubsourceOptionName::RetainHistory,
+                    value: self.parse_option_retain_history()?,
+                }
+            }
+            _ => unreachable!(),
+        };
+        Ok(option)
+    }
+
+    fn parse_create_state(&mut self) -> Result<Statement<Raw>, ParserError> {
+        self.expect_keyword(STATE)?;
+        let if_not_exists = self.parse_if_not_exists()?;
+        let name = self.parse_item_name()?;
+
+        let (columns, constraints) = self.parse_columns(Mandatory)?;
+
+        let with_options = if self.parse_keyword(WITH) {
+            self.expect_token(&Token::LParen)?;
+            let options = self.parse_comma_separated(Parser::parse_create_state_option)?;
+            self.expect_token(&Token::RParen)?;
+            options
+        } else {
+            vec![]
+        };
+
+        Ok(Statement::CreateState(CreateStateStatement {
+            name,
+            if_not_exists,
+            columns,
+            constraints,
+            with_options,
+        }))
+    }
+
+    fn parse_create_state_option(&mut self) -> Result<CreateStateOption<Raw>, ParserError> {
+        let option = match self.expect_one_of_keywords(&[KEY, RETAIN])? {
+            KEY => CreateStateOption {
+                name: CreateStateOptionName::Key,
+                value: self.parse_optional_option_value()?,
+            },
+            RETAIN => {
+                self.expect_keyword(HISTORY)?;
+                CreateStateOption {
+                    name: CreateStateOptionName::RetainHistory,
                     value: self.parse_option_retain_history()?,
                 }
             }
@@ -3025,12 +3067,12 @@ impl<'a> Parser<'a> {
             None
         };
 
-        let mut state_subsources = BTreeMap::new();
+        let mut state_collections = BTreeMap::new();
         while self.parse_keywords(&[EXPOSE, STATE]) {
             let key = self.parse_identifier()?;
             self.expect_keyword(AS)?;
             let name = self.parse_deferred_item_name()?;
-            state_subsources.insert(key, name);
+            state_collections.insert(key, name);
         }
 
         // New WITH block
@@ -3055,7 +3097,7 @@ impl<'a> Parser<'a> {
             key_constraint,
             external_references: referenced_subsources,
             progress_subsource,
-            state_subsources,
+            state_collections,
             with_options,
         }))
     }

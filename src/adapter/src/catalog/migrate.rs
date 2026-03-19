@@ -357,6 +357,9 @@ fn rewrite_sources_to_tables(
         let stmt = mz_sql::parse::parse(&item.create_sql)?.into_element().ast;
         match stmt {
             Statement::CreateSubsource(stmt) => subsources.push((item, stmt)),
+            // State collections are internal system-managed objects that do not
+            // need migration during the sources-to-tables transition.
+            Statement::CreateState(_stmt) => {}
             Statement::CreateSource(stmt) => sources.push((item, stmt)),
             _ => {}
         }
@@ -380,7 +383,7 @@ fn rewrite_sources_to_tables(
             with_options,
             external_references,
             progress_subsource,
-            state_subsources: _,
+            state_collections: _,
         } = source_stmt;
 
         let (progress_name, progress_item) = match progress_subsource {
@@ -495,7 +498,7 @@ fn rewrite_sources_to_tables(
                         with_options,
                         external_references: None,
                         progress_subsource: None,
-                        state_subsources: BTreeMap::new(),
+                        state_collections: BTreeMap::new(),
                     };
 
                     migrated_source_ids.insert(source_item.id, progress_item.id());
@@ -575,7 +578,7 @@ fn rewrite_sources_to_tables(
                         with_options,
                         external_references: None,
                         progress_subsource: None,
-                        state_subsources: BTreeMap::new(),
+                        state_collections: BTreeMap::new(),
                     };
                     (
                         progress_item.name().item.clone(),
@@ -654,7 +657,7 @@ fn rewrite_sources_to_tables(
                         with_options,
                         external_references: None,
                         progress_subsource: None,
-                        state_subsources: BTreeMap::new(),
+                        state_collections: BTreeMap::new(),
                     };
                     (
                         progress_item.name().item.clone(),
@@ -747,9 +750,6 @@ fn rewrite_sources_to_tables(
                             },
                             CreateSubsourceOptionName::Progress => {
                                 panic!("progress option should not exist on this subsource")
-                            }
-                            CreateSubsourceOptionName::State => {
-                                panic!("state option should not exist on this subsource")
                             }
                             CreateSubsourceOptionName::ExternalReference => {
                                 unreachable!("This option is handled separately above.")

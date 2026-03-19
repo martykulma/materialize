@@ -1187,6 +1187,7 @@ impl Coordinator {
                     | Statement::CreateSecret(_)
                     | Statement::CreateSink(_)
                     | Statement::CreateSubsource(_)
+                    | Statement::CreateState(_)
                     | Statement::CreateTable(_)
                     | Statement::CreateType(_)
                     | Statement::CreateView(_)
@@ -1359,14 +1360,19 @@ impl Coordinator {
                 return;
             }
 
-            // TODO (maz) --- prevent running CreateState
-
-            // `CREATE SUBSOURCE` statements are disallowed for users and are only generated
-            // automatically as part of purification
+            // `CREATE SUBSOURCE` statements are disallowed for users and are only
+            // generated automatically as part of purification
             Statement::CreateSubsource(_) => {
                 ctx.retire(Err(AdapterError::Unsupported(
                     "CREATE SUBSOURCE statements",
                 )));
+                return;
+            }
+
+            // `CREATE STATE` statements are disallowed for users and are only
+            // generated automatically as part of purification
+            Statement::CreateState(_) => {
+                ctx.retire(Err(AdapterError::Unsupported("CREATE STATE statements")));
                 return;
             }
 

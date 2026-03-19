@@ -19,9 +19,10 @@ use crate::ast::visit::{self, Visit};
 use crate::ast::visit_mut::{self, VisitMut};
 use crate::ast::{
     AstInfo, CreateConnectionStatement, CreateIndexStatement, CreateMaterializedViewStatement,
-    CreateSecretStatement, CreateSinkStatement, CreateSourceStatement, CreateSubsourceStatement,
-    CreateTableStatement, CreateViewStatement, CreateWebhookSourceStatement, Expr, Ident, Query,
-    Raw, RawItemName, Statement, UnresolvedItemName, ViewDefinition,
+    CreateSecretStatement, CreateSinkStatement, CreateSourceStatement, CreateStateStatement,
+    CreateSubsourceStatement, CreateTableStatement, CreateViewStatement,
+    CreateWebhookSourceStatement, Expr, Ident, Query, Raw, RawItemName, Statement,
+    UnresolvedItemName, ViewDefinition,
 };
 use crate::names::FullItemName;
 
@@ -40,6 +41,7 @@ pub fn create_stmt_rename_schema_refs(
         | stmt @ Statement::CreateWebhookSource(_)
         | stmt @ Statement::CreateSource(_)
         | stmt @ Statement::CreateSubsource(_)
+        | stmt @ Statement::CreateState(_)
         | stmt @ Statement::CreateSink(_)
         | stmt @ Statement::CreateView(_)
         | stmt @ Statement::CreateMaterializedView(_)
@@ -143,6 +145,7 @@ pub fn create_stmt_rename(create_stmt: &mut Statement<Raw>, to_item_name: String
         })
         | Statement::CreateSource(CreateSourceStatement { name, .. })
         | Statement::CreateSubsource(CreateSubsourceStatement { name, .. })
+        | Statement::CreateState(CreateStateStatement { name, .. })
         | Statement::CreateView(CreateViewStatement {
             definition: ViewDefinition { name, .. },
             ..
@@ -217,6 +220,7 @@ pub fn create_stmt_rename_refs(
         }
         Statement::CreateSource(_)
         | Statement::CreateSubsource(_)
+        | Statement::CreateState(_)
         | Statement::CreateTable(_)
         | Statement::CreateTableFromSource(_)
         | Statement::CreateSecret(_)

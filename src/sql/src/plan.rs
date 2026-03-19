@@ -281,9 +281,9 @@ impl Plan {
             StatementKind::CreateSchema => &[PlanKind::CreateSchema],
             StatementKind::CreateSecret => &[PlanKind::CreateSecret],
             StatementKind::CreateSink => &[PlanKind::CreateSink],
-            StatementKind::CreateSource | StatementKind::CreateSubsource => {
-                &[PlanKind::CreateSource]
-            }
+            StatementKind::CreateSource
+            | StatementKind::CreateSubsource
+            | StatementKind::CreateState => &[PlanKind::CreateSource],
             StatementKind::CreateWebhookSource => &[PlanKind::CreateSource, PlanKind::CreateTable],
             StatementKind::CreateTable => &[PlanKind::CreateTable],
             StatementKind::CreateTableFromSource => &[PlanKind::CreateTable],

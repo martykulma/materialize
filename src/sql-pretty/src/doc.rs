@@ -84,6 +84,10 @@ impl Pretty {
                 self.doc_display_pass(progress),
             ));
         }
+        for (key, name) in &v.state_collections {
+            let title = format!("EXPOSE STATE {} AS", key);
+            docs.push(nest_title(title, self.doc_display_pass(name)));
+        }
         if !v.with_options.is_empty() {
             docs.push(bracket(
                 "WITH (",

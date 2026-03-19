@@ -62,25 +62,26 @@ use mz_sql_parser::ast::{
     CreateMaterializedViewStatement, CreateNetworkPolicyStatement, CreateRoleStatement,
     CreateSchemaStatement, CreateSecretStatement, CreateSinkConnection, CreateSinkOption,
     CreateSinkOptionName, CreateSinkStatement, CreateSourceConnection, CreateSourceOption,
-    CreateSourceOptionName, CreateSourceStatement, CreateSubsourceOption,
-    CreateSubsourceOptionName, CreateSubsourceStatement, CreateTableFromSourceStatement,
-    CreateTableStatement, CreateTypeAs, CreateTypeListOption, CreateTypeListOptionName,
-    CreateTypeMapOption, CreateTypeMapOptionName, CreateTypeStatement, CreateViewStatement,
-    CreateWebhookSourceStatement, CsrConfigOption, CsrConfigOptionName, CsrConnection,
-    CsrConnectionAvro, CsrConnectionProtobuf, CsrSeedProtobuf, CsvColumns, DeferredItemName,
-    DocOnIdentifier, DocOnSchema, DropObjectsStatement, DropOwnedStatement, Expr, Format,
-    FormatSpecifier, IcebergSinkConfigOption, Ident, IfExistsBehavior, IndexOption,
-    IndexOptionName, KafkaSinkConfigOption, KeyConstraint, LoadGeneratorOption,
-    LoadGeneratorOptionName, MaterializedViewOption, MaterializedViewOptionName, MySqlConfigOption,
-    MySqlConfigOptionName, NetworkPolicyOption, NetworkPolicyOptionName,
-    NetworkPolicyRuleDefinition, NetworkPolicyRuleOption, NetworkPolicyRuleOptionName,
-    PgConfigOption, PgConfigOptionName, ProtobufSchema, QualifiedReplica, RefreshAtOptionValue,
-    RefreshEveryOptionValue, RefreshOptionValue, ReplicaDefinition, ReplicaOption,
-    ReplicaOptionName, RoleAttribute, SetRoleVar, SourceErrorPolicy, SourceIncludeMetadata,
-    SqlServerConfigOption, SqlServerConfigOptionName, Statement, TableConstraint,
-    TableFromSourceColumns, TableFromSourceOption, TableFromSourceOptionName, TableOption,
-    TableOptionName, UnresolvedDatabaseName, UnresolvedItemName, UnresolvedObjectName,
-    UnresolvedSchemaName, Value, ViewDefinition, WithOptionValue,
+    CreateSourceOptionName, CreateSourceStatement, CreateStateOption, CreateStateOptionName,
+    CreateStateStatement, CreateSubsourceOption, CreateSubsourceOptionName,
+    CreateSubsourceStatement, CreateTableFromSourceStatement, CreateTableStatement, CreateTypeAs,
+    CreateTypeListOption, CreateTypeListOptionName, CreateTypeMapOption, CreateTypeMapOptionName,
+    CreateTypeStatement, CreateViewStatement, CreateWebhookSourceStatement, CsrConfigOption,
+    CsrConfigOptionName, CsrConnection, CsrConnectionAvro, CsrConnectionProtobuf, CsrSeedProtobuf,
+    CsvColumns, DeferredItemName, DocOnIdentifier, DocOnSchema, DropObjectsStatement,
+    DropOwnedStatement, Expr, Format, FormatSpecifier, IcebergSinkConfigOption, Ident,
+    IfExistsBehavior, IndexOption, IndexOptionName, KafkaSinkConfigOption, KeyConstraint,
+    LoadGeneratorOption, LoadGeneratorOptionName, MaterializedViewOption,
+    MaterializedViewOptionName, MySqlConfigOption, MySqlConfigOptionName, NetworkPolicyOption,
+    NetworkPolicyOptionName, NetworkPolicyRuleDefinition, NetworkPolicyRuleOption,
+    NetworkPolicyRuleOptionName, PgConfigOption, PgConfigOptionName, ProtobufSchema,
+    QualifiedReplica, RefreshAtOptionValue, RefreshEveryOptionValue, RefreshOptionValue,
+    ReplicaDefinition, ReplicaOption, ReplicaOptionName, RoleAttribute, SetRoleVar,
+    SourceErrorPolicy, SourceIncludeMetadata, SqlServerConfigOption, SqlServerConfigOptionName,
+    Statement, TableConstraint, TableFromSourceColumns, TableFromSourceOption,
+    TableFromSourceOptionName, TableOption, TableOptionName, UnresolvedDatabaseName,
+    UnresolvedItemName, UnresolvedObjectName, UnresolvedSchemaName, Value, ViewDefinition,
+    WithOptionValue,
 };
 use mz_sql_parser::ident;
 use mz_sql_parser::parser::StatementParseResult;
@@ -770,7 +771,7 @@ pub fn plan_create_source(
         with_options,
         external_references: referenced_subsources,
         progress_subsource,
-        state_subsources: _,
+        state_collections: _,
     } = &stmt;
 
     mz_ore::soft_assert_or_log!(
@@ -1579,12 +1580,17 @@ fn plan_source_export_desc(
 generate_extracted_config!(
     CreateSubsourceOption,
     (Progress, bool, Default(false)),
-    (State, String),
     (ExternalReference, UnresolvedItemName),
     (RetainHistory, OptionalDuration),
     (TextColumns, Vec::<Ident>, Default(vec![])),
     (ExcludeColumns, Vec::<Ident>, Default(vec![])),
     (Details, String)
+);
+
+generate_extracted_config!(
+    CreateStateOption,
+    (Key, String),
+    (RetainHistory, OptionalDuration)
 );
 
 pub fn plan_create_subsource(
@@ -1602,7 +1608,6 @@ pub fn plan_create_subsource(
 
     let CreateSubsourceOptionExtracted {
         progress,
-        state,
         retain_history,
         external_reference,
         text_columns,
@@ -1615,10 +1620,10 @@ pub fn plan_create_subsource(
     // creating the AST for subsources as a response to CREATE SOURCE
     // statements, so this would fire in integration testing if we failed to
     // uphold it.
-    // Exactly one of: ingestion export (external_reference + of_source), progress, or state.
+    // Exactly one of: ingestion export (external_reference + of_source) or progress.
     assert!(
-        progress ^ state.is_some() ^ (external_reference.is_some() && of_source.is_some()),
-        "CREATE SUBSOURCE statement must specify exactly one of PROGRESS, STATE, or REFERENCES option"
+        progress ^ (external_reference.is_some() && of_source.is_some()),
+        "CREATE SUBSOURCE statement must specify exactly one of PROGRESS or REFERENCES option"
     );
 
     let desc = plan_source_export_desc(scx, name, columns, constraints)?;
@@ -1708,20 +1713,73 @@ pub fn plan_create_subsource(
         }
     } else if progress {
         DataSourceDesc::Progress
-    } else if let Some(key) = state {
-        DataSourceDesc::State {
-            key: StateCollectionId(key),
-        }
     } else {
-        panic!(
-            "subsources must specify one of `external_reference`, `progress`, `state`, or `references`"
-        )
+        panic!("subsources must specify one of `external_reference`, `progress`, or `references`")
     };
 
     let if_not_exists = *if_not_exists;
     let name = scx.allocate_qualified_name(normalize::unresolved_item_name(name.clone())?)?;
 
     let create_sql = normalize::create_statement(scx, Statement::CreateSubsource(stmt))?;
+
+    let compaction_window = plan_retain_history_option(scx, retain_history)?;
+    let source = Source {
+        create_sql,
+        data_source,
+        desc,
+        compaction_window,
+    };
+
+    Ok(Plan::CreateSource(CreateSourcePlan {
+        name,
+        source,
+        if_not_exists,
+        timeline: Timeline::EpochMilliseconds,
+        in_cluster: None,
+    }))
+}
+
+pub fn describe_create_state(
+    _: &StatementContext,
+    _: CreateStateStatement<Aug>,
+) -> Result<StatementDesc, PlanError> {
+    Ok(StatementDesc::new(None))
+}
+
+pub fn plan_create_state(
+    scx: &StatementContext,
+    stmt: CreateStateStatement<Aug>,
+) -> Result<Plan, PlanError> {
+    let CreateStateStatement {
+        name,
+        columns,
+        constraints,
+        if_not_exists,
+        with_options,
+    } = &stmt;
+
+    let CreateStateOptionExtracted {
+        key,
+        retain_history,
+        seen: _,
+    } = with_options.clone().try_into()?;
+
+    let key = key.expect("CREATE STATE must have KEY option");
+
+    assert!(
+        constraints.is_empty(),
+        "CREATE STATE does not support constraints"
+    );
+
+    let desc = plan_source_export_desc(scx, name, columns, constraints)?;
+    let data_source = DataSourceDesc::State {
+        key: StateCollectionId(key),
+    };
+
+    let if_not_exists = *if_not_exists;
+    let name = scx.allocate_qualified_name(normalize::unresolved_item_name(name.clone())?)?;
+
+    let create_sql = normalize::create_statement(scx, Statement::CreateState(stmt))?;
 
     let compaction_window = plan_retain_history_option(scx, retain_history)?;
     let source = Source {

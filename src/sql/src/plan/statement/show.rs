@@ -21,10 +21,10 @@ use mz_ore::collections::CollectionExt;
 use mz_repr::{CatalogItemId, Datum, RelationDesc, Row, SqlScalarType};
 use mz_sql_parser::ast::display::{AstDisplay, FormatMode};
 use mz_sql_parser::ast::{
-    CreateSubsourceOptionName, ExternalReferenceExport, ExternalReferences, ObjectType,
-    ShowCreateClusterStatement, ShowCreateConnectionStatement, ShowCreateMaterializedViewStatement,
-    ShowCreateTypeStatement, ShowObjectType, SqlServerConfigOptionName, SystemObjectType,
-    UnresolvedItemName, WithOptionValue,
+    CreateStateOptionName, CreateSubsourceOptionName, ExternalReferenceExport, ExternalReferences,
+    ObjectType, ShowCreateClusterStatement, ShowCreateConnectionStatement,
+    ShowCreateMaterializedViewStatement, ShowCreateTypeStatement, ShowObjectType,
+    SqlServerConfigOptionName, SystemObjectType, UnresolvedItemName, WithOptionValue,
 };
 use mz_sql_pretty::PrettyConfig;
 use query::QueryContext;
@@ -1272,8 +1272,16 @@ fn humanize_sql_for_show_create(
                     CreateSubsourceOptionName::Details => false,
                     CreateSubsourceOptionName::ExternalReference => true,
                     CreateSubsourceOptionName::Progress => true,
-                    CreateSubsourceOptionName::State => true,
                 }
+            });
+        }
+
+        Statement::CreateState(stmt) => {
+            stmt.with_options.retain_mut(|o| {
+                matches!(
+                    o.name,
+                    CreateStateOptionName::Key | CreateStateOptionName::RetainHistory
+                )
             });
         }
 

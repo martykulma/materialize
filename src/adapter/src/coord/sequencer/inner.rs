@@ -44,8 +44,8 @@ use mz_repr::{
 };
 use mz_sql::ast::{
     AlterSourceAddSubsourceOption, CreateSinkOption, CreateSinkOptionName, CreateSourceOptionName,
-    CreateSubsourceOption, CreateSubsourceOptionName, SqlServerConfigOption,
-    SqlServerConfigOptionName,
+    CreateStateOptionName, CreateStateStatement, CreateSubsourceOption, CreateSubsourceOptionName,
+    SqlServerConfigOption, SqlServerConfigOptionName,
 };
 use mz_sql::ast::{CreateSubsourceStatement, MySqlConfigOptionName, UnresolvedItemName};
 use mz_sql::catalog::{
@@ -427,6 +427,41 @@ impl Coordinator {
         })
     }
 
+    /// Plans a `CREATE STATE` statement for a state collection.
+    ///
+    /// State collections are created alongside their parent source during
+    /// `CREATE SOURCE` purification/sequencing. Like subsources, they are not
+    /// created independently by users.
+    pub(crate) fn plan_state(
+        &self,
+        session: &Session,
+        params: &mz_sql::plan::Params,
+        state_stmt: CreateStateStatement<mz_sql::names::Aug>,
+        item_id: CatalogItemId,
+        global_id: GlobalId,
+    ) -> Result<CreateSourcePlanBundle, AdapterError> {
+        let catalog = self.catalog().for_session(session);
+        let resolved_ids = mz_sql::names::visit_dependencies(&catalog, &state_stmt);
+
+        let plan = self.plan_statement(
+            session,
+            Statement::CreateState(state_stmt),
+            params,
+            &resolved_ids,
+        )?;
+        let plan = match plan {
+            Plan::CreateSource(plan) => plan,
+            _ => unreachable!(),
+        };
+        Ok(CreateSourcePlanBundle {
+            item_id,
+            global_id,
+            plan,
+            resolved_ids,
+            available_source_references: None,
+        })
+    }
+
     /// Prepares an `ALTER SOURCE...ADD SUBSOURCE`.
     pub(crate) async fn plan_purified_alter_source_add_subsource(
         &mut self,
@@ -516,7 +551,7 @@ impl Coordinator {
         ctx: &ExecuteContext,
         params: Params,
         progress_stmt: Option<CreateSubsourceStatement<Aug>>,
-        state_stmts: Vec<CreateSubsourceStatement<Aug>>,
+        state_stmts: Vec<CreateStateStatement<Aug>>,
         mut source_stmt: mz_sql::ast::CreateSourceStatement<Aug>,
         subsources: BTreeMap<UnresolvedItemName, PurifiedSourceExport>,
         available_source_references: plan::SourceReferences,
@@ -549,15 +584,14 @@ impl Coordinator {
             source_stmt.progress_subsource = Some(DeferredItemName::Named(progress_subsource));
         }
 
-        // 1b. Plan state subsources (same position as progress: before main source).
+        // 1b. Plan state collections (same position as progress: before main source).
         for state_stmt in state_stmts {
-            assert_none!(state_stmt.of_source);
-            // Extract the state collection key from the STATE option.
+            // Extract the state collection key from the KEY option.
             let state_key = state_stmt
                 .with_options
                 .iter()
                 .find_map(|opt| match &opt.name {
-                    CreateSubsourceOptionName::State => match &opt.value {
+                    CreateStateOptionName::Key => match &opt.value {
                         Some(WithOptionValue::Value(Value::String(s))) => Some(s.clone()),
                         _ => None,
                     },
@@ -567,7 +601,7 @@ impl Coordinator {
             let id_ts = self.get_catalog_write_ts().await;
             let (item_id, global_id) = self.catalog().allocate_user_id(id_ts).await?;
             let state_plan =
-                self.plan_subsource(ctx.session(), &params, state_stmt, item_id, global_id)?;
+                self.plan_state(ctx.session(), &params, state_stmt, item_id, global_id)?;
             let state_full_name = self
                 .catalog()
                 .resolve_full_name(&state_plan.plan.name, None);
@@ -580,7 +614,7 @@ impl Coordinator {
             };
             // Update the source statement so the catalog SQL references this
             // state subsource by its resolved name + ID.
-            source_stmt.state_subsources.insert(
+            source_stmt.state_collections.insert(
                 Ident::new_unchecked(state_key),
                 DeferredItemName::Named(state_item),
             );
