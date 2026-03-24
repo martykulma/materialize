@@ -620,7 +620,7 @@ fn rocksdb_core_loop<K, V, M, O, IM, F>(
             }
         });
         if let Err(e) = destroy_result {
-            tracing::error!(
+            tracing::warn!(
                 "retries exhausted trying to cleanup rocksdb dir on creation {}: {}",
                 instance_path.display(),
                 e.display_with_causes(),
@@ -655,7 +655,7 @@ fn rocksdb_core_loop<K, V, M, O, IM, F>(
     let db: DB = match retry_result {
         Ok(db) => db,
         Err(e) => {
-            tracing::error!(
+            tracing::warn!(
                 "failed to create rocksdb at {}: {}",
                 instance_path.display(),
                 e.display_with_causes(),
