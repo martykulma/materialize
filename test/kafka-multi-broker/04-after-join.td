@@ -17,14 +17,15 @@ $ set schema={"type": "record", "name": "schema", "fields": [ {"name": "f1", "ty
 
 $ set-sql-timeout duration=120s
 
-$ kafka-ingest format=avro topic=kafka-multi-broker schema=${schema} timestamp=21
-{"f1": "04-01" }
+$ kafka-ingest format=avro topic=kafka-multi-broker schema=${schema} timestamp=50
+{"f1": "05-01" }
 
-$ kafka-ingest format=avro topic=kafka-multi-broker schema=${schema} timestamp=22
-{"f1": "04-02" }
+$ kafka-ingest format=avro topic=kafka-multi-broker schema=${schema} timestamp=50
+{"f1": "05-02" }
 
-$ kafka-ingest format=avro topic=kafka-multi-broker schema=${schema} timestamp=23
-{"f1": "04-03" }
+$ kafka-ingest format=avro topic=kafka-multi-broker schema=${schema} timestamp=50
+{"f1": "05-03" }
+
 
 > SELECT f1 FROM kafka_multi_broker_tbl
 01-01
@@ -39,3 +40,6 @@ $ kafka-ingest format=avro topic=kafka-multi-broker schema=${schema} timestamp=2
 04-01
 04-02
 04-03
+05-01
+05-02
+05-03

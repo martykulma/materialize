@@ -51,3 +51,15 @@ def workflow_default(c: Composition) -> None:
     c.up("kafka1")
     time.sleep(10)
     c.run_testdrive_files("--kafka-addr=kafka1", "--no-reset", "03-after-join.td")
+
+    c.kill("kafka1")
+    time.sleep(10)
+    c.up("kafka1")
+    time.sleep(10)
+    c.run_testdrive_files("--kafka-addr=kafka1", "--no-reset", "04-after-join.td")
+
+    c.kill("kafka1")
+    time.sleep(10)
+    c.up("kafka1")
+    time.sleep(10)
+    c.run_testdrive_files("--kafka-addr=kafka1", "--no-reset", "05-after-join.td")
