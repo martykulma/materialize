@@ -933,7 +933,7 @@ where
 ///
 /// The function should return the new value for the key after merging all the updates.
 pub(crate) fn consolidating_merge_function<T: Eq, O>(
-    _key: UpsertKey,
+    key: UpsertKey,
     updates: impl Iterator<Item = StateValue<T, O>>,
 ) -> StateValue<T, O> {
     let mut current: StateValue<T, O> = Default::default();
@@ -943,6 +943,7 @@ pub(crate) fn consolidating_merge_function<T: Eq, O>(
         match update {
             StateValue::Consolidating(_) => {
                 current.merge_update_state(&update);
+                tracing::info!("consolidation merge, current state = {:?}", key);
             }
             StateValue::Value(_) => {
                 // This branch is more expensive, but we hopefully rarely hit
@@ -956,6 +957,9 @@ pub(crate) fn consolidating_merge_function<T: Eq, O>(
                         &mut bincode_buf,
                     );
                     current.merge_update_state(&update);
+                    tracing::info!("value merge, current state = {:?}", key);
+                } else {
+                    tracing::info!("skipped delete, current state = {:?}", key);
                 }
             }
         }

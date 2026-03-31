@@ -1,4 +1,3 @@
-# Copyright Materialize, Inc. and contributors. All rights reserved.
 #
 # Use of this software is governed by the Business Source License
 # included in the LICENSE file at the root of this repository.
@@ -682,4 +681,201 @@ def workflow_large_scale(c: Composition, parser: WorkflowArgumentParser) -> None
                 > SELECT COUNT(*) FROM s1_tbl;
                 {batch_size + 1}
                 """),
+        )
+
+
+def workflow_merge_tombstone(c: Composition) -> None:
+    """Regression test for consolidating_merge_function dropping Value(tombstone) entries.
+
+    During rehydration with prevent_snapshot_buffering=true, the Kafka source
+    re-reads the topic (including deletes). AtTime drains write provisional
+    Value(tombstone) entries via multi_put, while persist feedback writes
+    Consolidating merge operands via multi_merge for the same keys. After
+    rehydration, new updates trigger multi_get which invokes the RocksDB merge
+    function on the Value(tombstone) + Consolidating mix. The merge function
+    silently drops the tombstone, leading to incorrect diff_sum and a panic
+    in ensure_decoded.
+    """
+
+    dependencies = [
+        "materialized",
+        "zookeeper",
+        "kafka",
+        "schema-registry",
+    ]
+
+    # Use large values to create a persist shard that takes several seconds
+    # to replay during rehydration. This gives us a window to send new Kafka
+    # data while rehydration is in progress (triggering AtTime drains).
+    # 10 batches × 50K keys × 1KB = ~500MB in persist.
+    pad_len = 1024
+    string_pad = "x" * pad_len  # 1KB per value
+
+    # Number of keys per batch.
+    batch_size = 50_000
+
+    with c.override(
+        Materialized(
+            sanity_restart=False,
+            additional_system_parameter_defaults={
+                # Enable the RocksDB merge operator — this is required to trigger the bug.
+                "storage_rocksdb_use_merge_operator": "true",
+                # Enable snapshot buffering prevention — this causes AtTime drains
+                # which write provisional Value entries via multi_put during rehydration.
+                "storage_upsert_prevent_snapshot_buffering": "true",
+                "storage_dataflow_delay_sources_past_rehydration": "true",
+                # Limit batch processing to 1 event per loop iteration. This
+                # forces sentinel operations at different timestamps into
+                # separate drain cycles, producing separate multi_put and
+                # multi_merge calls — required to accumulate multiple
+                # Consolidating merge operands for the same key in RocksDB.
+                #"storage_upsert_max_snapshot_batch_buffering": "1",
+                # Use a small write buffer manager to force frequent memtable flushes,
+                # creating multiple LSM levels with less data.
+                #"upsert_rocksdb_write_buffer_manager_memory_bytes": "5242880",  # 5MB
+                "upsert_rocksdb_write_buffer_manager_memory_bytes": "1048576",
+                "upsert_rocksdb_write_buffer_manager_allow_stall": "true",
+            },
+            environment_extra=materialized_environment_extra,
+            default_replication_factor=2,
+        ),
+        Testdrive(no_reset=True, consistent_seed=True, default_timeout="300s"),
+    ):
+        c.rm("testdrive")
+        c.down(destroy_volumes=True)
+        c.up(*dependencies)
+
+        # Phase 1: Setup cluster, connections, and create the source
+        c.run_testdrive_files("merge-tombstone/01-setup.td")
+        c.run_testdrive_files("merge-tombstone/02-create-source.td")
+
+        # Phase 2: Build the persist shard with multiple sentinel operations
+        # at well-separated timestamps. Each step verifies the count, which
+        # forces the source to fully process, output to persist, and advance
+        # the frontier — guaranteeing each sentinel operation is at a distinct
+        # persist timestamp. During rehydration, these entries are delivered
+        # across separate persist feedback batches, producing separate
+        # multi_merge (Consolidating) calls. The large stable key batches
+        # between sentinel operations force memtable flushes during
+        # rehydration, ensuring the sentinel's Consolidating entries end up
+        # in different SST files rather than being combined in one memtable.
+
+        # Build up a large persist shard with many stable key batches.
+        # Each batch is 50K keys × 1KB = 50MB. We insert 10 batches for
+        # ~500MB total in persist, ensuring rehydration takes several seconds.
+        num_stable_batches = 10
+        c.run_testdrive_files(
+            f"--var=value=sentinel_v1_{string_pad}",
+            "merge-tombstone/02-sentinel-insert.td",
+        )
+        for i in range(num_stable_batches):
+            c.run_testdrive_files(
+                f"--var=repeat={batch_size}",
+                f"--var=value={string_pad}",
+                f"--var=start={i * batch_size}",
+                "merge-tombstone/02-insert.td",
+            )
+
+        # Insert the sentinel and verify (establishes timestamp T1 in persist)
+        c.run_testdrive_files(
+            f"--var=expected={num_stable_batches * batch_size + 1}",
+            "merge-tombstone/04-verify.td",
+        )
+
+        # Delete the sentinel and verify (establishes timestamp T2 in persist)
+        c.run_testdrive_files("merge-tombstone/03-sentinel-delete.td")
+        c.run_testdrive_files(
+            f"--var=expected={num_stable_batches * batch_size}",
+            "merge-tombstone/04-verify.td",
+        )
+
+        c.run_testdrive_files(
+            f"--var=repeat={batch_size}",
+            f"--var=value={string_pad}",
+            f"--var=start={5 * batch_size}",
+            "merge-tombstone/02-insert.td",
+        )
+
+        c.run_testdrive_files(
+            f"--var=value=sentinel_v1_{string_pad}",
+            "merge-tombstone/02-sentinel-insert.td",
+        )
+
+        # Phase 3: Before forcing rehydration, increase the source timestamp
+        # interval. This slows down how often the source frontier advances,
+        # keeping input_upper stable at the event_time for longer. This
+        # greatly increases the chance that the AtTime drain condition
+        # (input_upper == event_time) is met when new data arrives during
+        # rehydration. We only set this NOW (after Phase 2) to avoid
+        # causing persist to consolidate Phase 2's sentinel operations
+        # into the same timestamp.
+        #c.sql(
+        #    "ALTER SYSTEM SET max_timestamp_interval = '10s'",
+        #    port=6877,
+        #    user="mz_system",
+        #)
+        #c.sql(
+        #    "ALTER SYSTEM SET min_timestamp_interval = '10s'",
+        #    port=6877,
+        #    user="mz_system",
+        #)
+        #c.sql("ALTER SOURCE merge_tombstone_src SET (TIMESTAMP INTERVAL = '10s')")
+
+        # Force rehydration, then send data WHILE rehydration is in progress.
+        # ALTER CLUSTER returns immediately; rehydration of the large persist
+        # shard (~500MB) runs asynchronously and takes several seconds.
+        # Data sent to Kafka right after starting the replica arrives on the
+        # source input DURING rehydration. With the 10s timestamp interval,
+        # the frontier stays at the same timestamp for a long window,
+        # creating the real-time interleaving that triggers AtTime drains.
+        c.testdrive(
+            dedent(
+                """
+                > ALTER CLUSTER storage_cluster SET (REPLICATION FACTOR = 0)
+                """
+            )
+        )
+
+        # Immediately send sentinel insert + stable batch to Kafka while
+        # rehydration is in progress. The source input reads these new
+        # messages concurrently with persist feedback replaying the ~500MB
+        # shard. With real-time data arrival, the input frontier can land
+        # exactly at the event time, satisfying the AtTime drain condition.
+        # The AtTime drain writes Value(sentinel_val) via multi_put.
+        # Persist feedback later confirms with Consolidating(+1) via
+        # multi_merge. The merge function sees Value(val) + Consolidating(+1)
+        # → diff_sum = 1 + 1 = 2 → ensure_decoded panics.
+        c.run_testdrive_files(
+            f"--var=value=sentinel_trigger_{string_pad}",
+            "merge-tombstone/02-sentinel-insert.td",
+        )
+        c.run_testdrive_files(
+            f"--var=repeat={batch_size}",
+            f"--var=value={string_pad}",
+            f"--var=start={num_stable_batches * batch_size}",
+            "merge-tombstone/02-insert.td",
+        )
+
+        c.testdrive(
+            dedent(
+                """
+                > ALTER CLUSTER storage_cluster SET (REPLICATION FACTOR = 1)
+                """
+            )
+        )
+
+        # Phase 4: Send a final update for the sentinel to trigger multi_get
+        # (in case the merge hasn't been triggered yet by the above).
+        for i in range(1, 10):
+            #c.run_testdrive_files("merge-tombstone/03-sentinel-delete.td")
+            c.run_testdrive_files(
+                f"--var=value=sentinel_final_{string_pad}",
+                "merge-tombstone/02-sentinel-insert.td",
+            )
+
+        c.run_testdrive_files("merge-tombstone/03-sentinel-delete.td")
+        # Verify the count: stable batches + 1 new batch + sentinel.
+        c.run_testdrive_files(
+            f"--var=expected={(num_stable_batches + 1) * batch_size}",
+            "merge-tombstone/04-verify.td",
         )
