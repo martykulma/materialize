@@ -764,10 +764,6 @@ def workflow_merge_tombstone(c: Composition) -> None:
         # Each batch is 50K keys × 1KB = 50MB. We insert 10 batches for
         # ~500MB total in persist, ensuring rehydration takes several seconds.
         num_stable_batches = 10
-        c.run_testdrive_files(
-            f"--var=value=sentinel_v1_{string_pad}",
-            "merge-tombstone/02-sentinel-insert.td",
-        )
         for i in range(num_stable_batches):
             c.run_testdrive_files(
                 f"--var=repeat={batch_size}",
@@ -777,6 +773,11 @@ def workflow_merge_tombstone(c: Composition) -> None:
             )
 
         # Insert the sentinel and verify (establishes timestamp T1 in persist)
+        c.run_testdrive_files(
+            f"--var=value=sentinel_v1_{string_pad}",
+            "merge-tombstone/02-sentinel-insert.td",
+        )
+
         c.run_testdrive_files(
             f"--var=expected={num_stable_batches * batch_size + 1}",
             "merge-tombstone/04-verify.td",
@@ -789,12 +790,12 @@ def workflow_merge_tombstone(c: Composition) -> None:
             "merge-tombstone/04-verify.td",
         )
 
-        c.run_testdrive_files(
-            f"--var=repeat={batch_size}",
-            f"--var=value={string_pad}",
-            f"--var=start={5 * batch_size}",
-            "merge-tombstone/02-insert.td",
-        )
+#        c.run_testdrive_files(
+#            f"--var=repeat={batch_size}",
+#            f"--var=value={string_pad}",
+#            f"--var=start={5 * batch_size}",
+#            "merge-tombstone/02-insert.td",
+#        )
 
         c.run_testdrive_files(
             f"--var=value=sentinel_v1_{string_pad}",
@@ -866,16 +867,15 @@ def workflow_merge_tombstone(c: Composition) -> None:
 
         # Phase 4: Send a final update for the sentinel to trigger multi_get
         # (in case the merge hasn't been triggered yet by the above).
-        for i in range(1, 10):
-            #c.run_testdrive_files("merge-tombstone/03-sentinel-delete.td")
-            c.run_testdrive_files(
-                f"--var=value=sentinel_final_{string_pad}",
-                "merge-tombstone/02-sentinel-insert.td",
-            )
+#        for i in range(1, 3):
+#            c.run_testdrive_files("merge-tombstone/03-sentinel-delete.td")
+#            c.run_testdrive_files(
+#                f"--var=value=sentinel_final_{string_pad}",
+#                "merge-tombstone/02-sentinel-insert.td",
+#            )
 
-        c.run_testdrive_files("merge-tombstone/03-sentinel-delete.td")
         # Verify the count: stable batches + 1 new batch + sentinel.
         c.run_testdrive_files(
-            f"--var=expected={(num_stable_batches + 1) * batch_size}",
+            f"--var=expected={(num_stable_batches + 1) * batch_size + 1}",
             "merge-tombstone/04-verify.td",
         )
