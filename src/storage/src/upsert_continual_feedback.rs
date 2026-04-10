@@ -1115,6 +1115,132 @@ mod test {
         assert_eq!(actual_output, expected_output);
     }
 
+    /// Integration test proving that the RocksDB merge operator incorrectly
+    /// handles `StateValue::Value` entries. When `multi_put` writes a `Value`
+    /// (from an AtTime drain) and `multi_merge` later writes a `Consolidating`
+    /// entry (from persist feedback) for the same key, the merge function
+    /// double-counts non-tombstone Values and silently drops tombstone Values.
+    ///
+    /// This test directly exercises the `UpsertState<RocksDB>` API with the
+    /// merge operator enabled, bypassing the timing-sensitive AtTime drain
+    /// condition in the pipeline. It proves the bug is reachable through the
+    /// real RocksDB code path.
+    #[mz_ore::test(tokio::test)]
+    #[cfg_attr(miri, ignore)]
+    async fn merge_operator_value_double_count() {
+        let rocksdb_dir = tempfile::tempdir().unwrap();
+
+        // Set up metrics infrastructure (required by UpsertState).
+        let source_id = GlobalId::User(0);
+        let metrics_registry = MetricsRegistry::new();
+        let upsert_metrics_defs = UpsertMetricDefs::register_with(&metrics_registry);
+        let upsert_metrics = UpsertMetrics::new(&upsert_metrics_defs, source_id, 0, None);
+        let rocksdb_shared_metrics = Arc::clone(&upsert_metrics.rocksdb_shared);
+        let rocksdb_instance_metrics = Arc::clone(&upsert_metrics.rocksdb_instance_metrics);
+
+        let metrics_registry = MetricsRegistry::new();
+        let source_statistics_defs = SourceStatisticsMetricDefs::register_with(&metrics_registry);
+        let envelope = SourceEnvelope::Upsert(UpsertEnvelope {
+            source_arity: 2,
+            style: UpsertStyle::Default(KeyEnvelope::Flattened),
+            key_indices: vec![0],
+        });
+        let source_statistics = SourceStatistics::new(
+            source_id,
+            0,
+            &source_statistics_defs,
+            source_id,
+            &ShardId::new(),
+            envelope,
+            Antichain::from_elem(Timestamp::minimum()),
+        );
+
+        // Create a RocksDB instance with the merge operator enabled.
+        let merge_operator = Some((
+            "upsert_state_snapshot_merge_v1".to_string(),
+            |a: &[u8], b: ValueIterator<BincodeOpts, StateValue<(), u64>>| {
+                consolidating_merge_function::<(), u64>(a.into(), b)
+            },
+        ));
+        let rocksdb_inst = mz_rocksdb::RocksDBInstance::new(
+            rocksdb_dir.path(),
+            mz_rocksdb::InstanceOptions::new(
+                Env::mem_env().unwrap(),
+                5,
+                merge_operator,
+                upsert_bincode_opts(),
+            ),
+            RocksDBConfig::new(Default::default(), None),
+            rocksdb_shared_metrics,
+            rocksdb_instance_metrics,
+        )
+        .unwrap();
+
+        let rocksdb_backend = crate::upsert::rocksdb::RocksDB::new(rocksdb_inst);
+
+        let upsert_shared_metrics = Arc::clone(&upsert_metrics.shared);
+        let mut state = crate::upsert::types::UpsertState::new(
+            rocksdb_backend,
+            upsert_shared_metrics,
+            &upsert_metrics,
+            source_statistics,
+            0,
+        );
+
+        // Create a test key and value.
+        let key = UpsertKey::from_key(Ok(&Row::pack_slice(&[Datum::Int64(42)])));
+        let value: UpsertValue = Ok(Row::pack_slice(&[Datum::Int64(42), Datum::Int64(100)]));
+
+        // TODO: Not sure how we got this finalized value yet!
+        // Step 1: multi_put writes a Value (simulating an AtTime drain insert).
+        // This creates a RocksDB Put entry for the key.
+        let value_inner = crate::upsert::types::Value {
+            finalized: Some(value.clone()),
+            provisional: None,
+        };
+        state
+            .multi_put(
+                true,
+                vec![(
+                    key,
+                    crate::upsert::types::PutValue {
+                        value: Some(value_inner),
+                        previous_value_metadata: None,
+                    },
+                )],
+            )
+            .await
+            .unwrap();
+
+        // Step 2: consolidate_chunk writes a Consolidating(+1) for the same key
+        // (simulating persist feedback confirming the insert). This creates a
+        // RocksDB Merge operand on top of the Put from step 1.
+        state
+            .consolidate_chunk(
+                vec![(key, value.clone(), Diff::ONE)].into_iter(),
+                true, // mark snapshot as completed
+            )
+            .await
+            .unwrap();
+
+        // Step 3: multi_get reads the key. RocksDB calls the merge function
+        // to combine the Put(Value) with the Merge(Consolidating).
+        //
+        // The bug: the merge function converts Value(val) to Consolidating(+1)
+        // and adds it to the existing Consolidating(+1), producing diff_sum=2.
+        // ensure_decoded then panics because diff_sum must be 0 or 1.
+        let mut result = vec![crate::upsert::types::UpsertValueAndSize::default()];
+        state.multi_get(vec![key], result.iter_mut()).await.unwrap();
+
+        let state_value = result[0]
+            .value
+            .as_mut()
+            .expect("key should exist in state");
+
+        // This will panic with "invalid upsert state" if diff_sum != 0 or 1.
+        state_value.ensure_decoded(upsert_bincode_opts(), source_id, Some(&key));
+    }
+
     #[mz_ore::test]
     #[cfg_attr(miri, ignore)]
     fn gh_9540_repro() {
