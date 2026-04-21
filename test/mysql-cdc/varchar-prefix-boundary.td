@@ -61,7 +61,7 @@ CREATE TABLE accounts (id int unsigned NOT NULL AUTO_INCREMENT, title_id int uns
 INSERT INTO accounts (email, password, first_name, last_name, display_name) VALUES ('alice@example.com', 'hunter2', 'Alice', 'Smith', 'alice');
 
 > CREATE SOURCE mz_source FROM MYSQL CONNECTION mysql_conn;
-> CREATE TABLE accounts FROM SOURCE mz_source (REFERENCE public.accounts);
+> CREATE TABLE accounts FROM SOURCE mz_source (REFERENCE public.accounts) WITH (EXCLUDE COLUMNS (password));
 
 > SELECT id, email, language FROM accounts;
 1 "alice@example.com" en
@@ -117,18 +117,21 @@ INSERT INTO accounts (email, password, first_name, display_name, profile_image, 
 6 zh 2 2
 7 en 2 2
 
-# Byte lengths on the 2-byte-prefix columns (password, display_name) and
-# on the near-max 1-byte-prefix column (profile_image). Any byte-offset
-# drift in the binlog parse would surface as spurious extra or missing
-# bytes here, not just on `language`.
-> SELECT id, char_length(password), octet_length(password), char_length(display_name), octet_length(display_name), char_length(profile_image), octet_length(profile_image) FROM accounts ORDER BY id;
-1 7 7 5 5 0 0
-2 100 100 100 100 80 80
-3 100 300 100 300 80 240
-4 100 300 100 300 80 240
-5 1 1 <null> <null> 0 0
-6 85 255 85 255 80 80
-7 86 256 86 256 80 80
+# Byte lengths on the remaining 2-byte-prefix column (display_name) and
+# on the near-max 1-byte-prefix column (profile_image). `password` is
+# excluded per the customer's EXCLUDE COLUMNS configuration, so it's
+# consumed off the binlog row but not decoded into Materialize's
+# subsource. If the positional decoder mishandles the excluded slot
+# (e.g., fails to advance past its value), every subsequent column
+# would shift and show up here with wrong lengths.
+> SELECT id, char_length(display_name), octet_length(display_name), char_length(profile_image), octet_length(profile_image) FROM accounts ORDER BY id;
+1 5 5 0 0
+2 100 100 80 80
+3 100 300 80 240
+4 100 300 80 240
+5 <null> <null> 0 0
+6 85 255 80 80
+7 86 256 80 80
 
 # The utf8mb4 columns should also preserve their exact byte lengths,
 # including the emoji case where email crosses 255 bytes.

@@ -582,4 +582,72 @@ mod tests {
             ))
         );
     }
+
+    /// Decodes a customer-supplied hex blob of `ProtoSourceExportStatementDetails`
+    /// (the same format stored in the catalog on source-export statements, and
+    /// the same decode recipe used in src/sql/src/plan/statement/ddl.rs:1779-1786)
+    /// and prints the resulting `MySqlTableDesc` to stdout for inspection.
+    #[mz_ore::test]
+    fn decode_customer_mysql_source_export_details() {
+        use crate::sources::{ProtoSourceExportStatementDetails, SourceExportStatementDetails};
+        use prost::Message;
+
+        let hex_str = "12e6050a\
+b1050a086163636f756e747312036170701a0b0a02696412050a03f201001a130a\
+087469746c655f696412070a03f2010010011a130a0a636f756e7472795f696412\
+050a03f201001a120a05656d61696c12090a078a01040a0208501a1e0a0f616c74\
+65726e6174655f656d61696c120b0a078a01040a02085010011a0a0a0870617373\
+776f72641a190a0a66697273745f6e616d65120b0a078a01040a02082810011a1a\
+0a0b6d6964646c655f6e616d65120b0a078a01040a02082810011a180a096c6173\
+745f6e616d65120b0a078a01040a02082810011a1b0a0c646973706c61795f6e61\
+6d65120b0a078a01040a02086410011a1a0a0d70726f66696c655f696d61676512\
+090a078a01040a0208501a150a086c616e677561676512090a078a01040a020805\
+1a270a0667656e64657212040a027a001a170a046d616c650a0666656d616c650a\
+07756e6b6e6f776e1a1b0a0c6d6f62696c655f70686f6e65120b0a078a01040a02\
+081410011a130a0962697274686461746512060a02420010011a180a0969645f70\
+6872617365120b0a078a01040a02082d10011a0f0a0561646d696e12060a021a00\
+10011a120a08766572696669656412060a021a0010011a2d0a057468656d651206\
+0a027a0010011a1c0a056c696768740a04677261790a046461726b0a07636c6173\
+7369631a580a0673746174757312060a027a0010011a460a04676f6f640a09696e\
+2d7265766965770a0a7465726d696e617465640a0b6963722d6c6576656c2d310a\
+0b6963722d6c6576656c2d320a0d7265766965772d7061737365641a120a076372\
+656174656412070a05aa02020a001a130a086d6f64696669656412070a05aa0202\
+0a001a140a0764656c6574656412090a05aa02020a001001220f0a075052494d41\
+525910011a02696422150a0c656d61696c5f756e697175651a05656d61696c1230\
+64356238663864632d383339632d313165642d613261392d303262303535643734\
+3930333a312d313838363334323735";
+
+        let bytes = hex::decode(hex_str.replace('\n', "")).expect("valid hex");
+        let proto =
+            ProtoSourceExportStatementDetails::decode(&*bytes).expect("valid proto encoding");
+        let details = SourceExportStatementDetails::from_proto(proto)
+            .expect("proto converts to SourceExportStatementDetails");
+
+        match details {
+            SourceExportStatementDetails::MySql {
+                table,
+                initial_gtid_set,
+            } => {
+                println!("---- MySqlTableDesc ----");
+                println!("schema_name     = {:?}", table.schema_name);
+                println!("name            = {:?}", table.name);
+                println!("columns.len()   = {}", table.columns.len());
+                for (i, col) in table.columns.iter().enumerate() {
+                    println!(
+                        "  [{:>2}] name={:<20} column_type={:?} meta={:?}",
+                        i, col.name, col.column_type, col.meta,
+                    );
+                }
+                println!("keys.len()      = {}", table.keys.len());
+                for key in &table.keys {
+                    println!(
+                        "  name={:?} is_primary={} columns={:?}",
+                        key.name, key.is_primary, key.columns,
+                    );
+                }
+                println!("initial_gtid_set = {:?}", initial_gtid_set);
+            }
+            _ => panic!("expected MySql variant"),
+        }
+    }
 }

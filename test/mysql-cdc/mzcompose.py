@@ -51,6 +51,29 @@ def create_mysql_replica(mysql_version: str) -> MySql:
     )
 
 
+def create_mysql_minimal_metadata(mysql_version: str) -> MySql:
+    """
+    MySQL with binlog_row_metadata=MINIMAL. Matches the RDS default
+    configuration: binlog_row_image must still be FULL (Materialize enforces
+    that at CREATE SOURCE), but row metadata can be MINIMAL — which is the
+    case in which positional-decoder drift has been observed in the field.
+    """
+    return MySql(
+        version=mysql_version,
+        use_seeded_image=False,
+        additional_args=[
+            "--log-bin=mysql-bin",
+            "--gtid_mode=ON",
+            "--enforce_gtid_consistency=ON",
+            "--binlog-format=row",
+            "--binlog-row-image=full",
+            "--binlog-row-metadata=minimal",
+            "--server-id=1",
+            "--max-connections=500",
+        ],
+    )
+
+
 SERVICES = [
     Mz(app_password=""),
     Materialized(
@@ -151,6 +174,51 @@ def workflow_replica_connection(c: Composition, parser: WorkflowArgumentParser) 
         c.run_testdrive_files(
             f"--var=mysql-root-password={MySql.DEFAULT_ROOT_PASSWORD}",
             "override/10-replica-connection.td",
+        )
+
+
+def workflow_minimal_metadata(c: Composition, parser: WorkflowArgumentParser) -> None:
+    """
+    Runs a focused set of CDC tests with binlog_row_metadata=minimal, matching
+    the RDS default. workflow_cdc runs the same tests under FULL metadata; this
+    workflow exists to catch the positional-decoder drift class of bug that
+    only manifests under MINIMAL metadata with mixed utf8mb3/utf8mb4 schemas.
+    """
+    mysql_version = get_targeted_mysql_version(parser)
+
+    parser.add_argument(
+        "filter",
+        nargs="*",
+        default=[
+            "varchar-prefix-boundary.td",
+            "accounts-compatible-ddl.td",
+            "accounts-full-ddl.td",
+            "accounts-customer-repro.td",
+            "accounts-trigger-audit.td",
+            "accounts-password-length-stress.td",
+        ],
+        help="limit to only the files matching filter",
+    )
+    args = parser.parse_args()
+
+    matching_files = []
+    for pattern in args.filter:
+        matching_files.extend(
+            glob.glob(pattern, root_dir=MZ_ROOT / "test" / "mysql-cdc")
+        )
+    matching_files = sorted(matching_files)
+    print(f"Files: {matching_files}")
+
+    with c.override(create_mysql_minimal_metadata(mysql_version)):
+        c.up("materialized", "mysql")
+        c.test_parts(
+            matching_files,
+            lambda file: c.run_testdrive_files(
+                f"--var=mysql-root-password={MySql.DEFAULT_ROOT_PASSWORD}",
+                f"--var=default-replica-size=scale={Materialized.Size.DEFAULT_SIZE},workers={Materialized.Size.DEFAULT_SIZE}",
+                f"--var=default-storage-size=scale={Materialized.Size.DEFAULT_SIZE},workers=1",
+                file,
+            ),
         )
 
 

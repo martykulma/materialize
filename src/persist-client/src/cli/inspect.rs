@@ -70,6 +70,12 @@ pub(crate) enum Command {
     /// Prints blob batch part contents
     BlobBatchPart(BlobBatchPartArgs),
 
+    /// Prints the contents of an inline batch part (the bytes embedded
+    /// directly in consensus state under a `kind.Inline` entry), which
+    /// `blob-batch-part` cannot fetch because there's no blob. Takes the
+    /// raw inline bytes on stdin.
+    InlineBatchPart(InlineBatchPartArgs),
+
     /// Prints consolidated and unconsolidated size, in bytes and update count
     ConsolidatedSize(StateArgs),
 
@@ -152,6 +158,10 @@ pub async fn run(command: InspectArgs) -> Result<(), anyhow::Error> {
         Command::BlobBatchPart(args) => {
             let shard_id = ShardId::from_str(&args.shard_id).expect("invalid shard id");
             let updates = blob_batch_part(&args.blob_uri, shard_id, args.key, args.limit).await?;
+            println!("{}", json!(updates));
+        }
+        Command::InlineBatchPart(args) => {
+            let updates = inline_batch_part(args.limit).await?;
             println!("{}", json!(updates));
         }
         Command::ConsolidatedSize(args) => {
@@ -341,6 +351,79 @@ pub async fn blob_batch_part(
         metrics.read.snapshot.clone(),
         parsed.desc.clone(),
         &key.0,
+        None,
+        parsed,
+    );
+    let mut out = BatchPartOutput {
+        desc,
+        updates: Vec::new(),
+    };
+    let records = encoded_part
+        .updates()
+        .as_part()
+        .ok_or_else(|| anyhow!("expected structured data"))?
+        .as_ord();
+    for (k, v, t, d) in records.iter() {
+        if out.updates.len() > limit {
+            break;
+        }
+        out.updates.push(BatchPartUpdate {
+            k: k.to_string(),
+            v: v.to_string(),
+            t: u64::from_le_bytes(t),
+            d: i64::from_le_bytes(d),
+        });
+    }
+
+    Ok(out)
+}
+
+/// Arguments for decoding an inline batch part (bytes from `kind.Inline` in
+/// consensus state). The raw bytes are supplied on stdin — typically by piping
+/// from jq against a saved `state.json`.
+#[derive(Debug, Clone, clap::Parser)]
+pub struct InlineBatchPartArgs {
+    /// Number of updates to output. Default is unbounded.
+    #[clap(long, default_value = "18446744073709551615")]
+    limit: usize,
+}
+
+/// Decodes an inline batch part from bytes piped in on stdin.
+///
+/// Usage, extracting inline bytes from a state.json with jq:
+/// ```text
+/// jq -r '[.. | objects | .kind? // empty
+///         | select(has("Inline")) | .Inline[]] | @text' state.json \
+///   | python3 -c 'import sys; sys.stdout.buffer.write(bytes([int(x) for x in sys.stdin.read().split()]))' \
+///   | persistcli inspect inline-batch-part
+/// ```
+///
+/// Or if you have the bytes as a single JSON array of ints, any method that
+/// converts them to raw bytes on stdout is fine.
+pub async fn inline_batch_part(limit: usize) -> Result<impl serde::Serialize, anyhow::Error> {
+    use std::io::Read;
+
+    let cfg = PersistConfig::new_default_configs(&READ_ALL_BUILD_INFO, SYSTEM_TIME.clone());
+    let metrics = Arc::new(Metrics::new(&cfg, &MetricsRegistry::new()));
+
+    let mut buf = Vec::new();
+    std::io::stdin().read_to_end(&mut buf)?;
+    eprintln!("inline-batch-part: read {} bytes from stdin", buf.len());
+    let buf = mz_ore::bytes::SegmentedBytes::from(buf);
+
+    let parsed = BlobTraceBatchPart::<u64>::decode(&buf, &metrics.columnar)
+        .map_err(|e| anyhow!("decode failed: {e:?}"))?;
+    let desc = parsed.desc.clone();
+
+    // Fabricate a dummy key for EncodedPart — inline parts have no actual
+    // key, and the one the decoder needs is only used for diagnostics.
+    let dummy_key = PartialBatchKey("inline/p00000000-0000-0000-0000-000000000000".to_string());
+
+    let encoded_part = EncodedPart::new(
+        &FetchConfig::from_persist_config(&cfg),
+        metrics.read.snapshot.clone(),
+        parsed.desc.clone(),
+        &dummy_key.0,
         None,
         parsed,
     );
