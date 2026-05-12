@@ -8,6 +8,47 @@ Companion to `doc/developer/source_abstractions.md` (current invariants).
 
 Format: `## YYYY-MM-DD — <slug>` per entry. Sub-headings free-form.
 
+## Index
+
+Navigational only. Each link is a single entry; entries are chronological and may
+supersede earlier ones.
+
+1. [Initial alternatives sketch](#2026-04-29--initial-alternatives-sketch) — proposes four
+   directions: (A) connector kernel trait, (B) collapse scopes, (D) per-export fault
+   isolation, (E) typed event enum. Recommends order E → A → D → B.
+2. [Validation of (A) against current connectors](#2026-04-29--validation-of-a-against-current-connectors)
+   — walks the unified-kernel proposal through Kafka, PG, MySQL, SQL Server, generator.
+   Five revisions emerge to handle the connectors' real shapes.
+3. [Split: `MultiplexedSource` vs `DemuxedSource`](#2026-04-29--split-multiplexedsource-vs-demuxedsource)
+   — replaces the unified kernel with two traits matching the two natural connector
+   shapes (CDC-style vs partitioned-log). Restart-unit isolation becomes trait-implicit.
+4. [Supervisor model: Timely vs tokio](#2026-04-29--supervisor-model-timely-vs-tokio) —
+   chooses the hybrid model: pure-async connector traits + thin per-worker Timely shim
+   that owns capabilities. Closes "where does the connector run?" question.
+5. [Prototype review: `maz-sk-single-time-domain`](#2026-04-29--prototype-review-maz-sk-single-time-domain)
+   — confirms the prototype implements the hybrid model. Catalogs CI-blocking bugs:
+   slot management (SM-1..5) and error propagation (EP-1..5) plus parity gaps (G-1..5).
+6. [Backpressure correction](#2026-04-29--backpressure-correction) — corrects prior
+   review: backpressure is *designed* (resume_upper feedback) but unfinished (no actual
+   pause gate). Recommends bounded channel as memory-safety floor only.
+7. [Closing remaining design questions](#2026-04-29--closing-remaining-design-questions)
+   — closes: SnapshotPlan replayability (not needed), stream shape (one stream),
+   discover deltas (absolute), separate crate (deferred). Marks design phase done.
+8. [`MultiplexedSource` trait sketched against PG prototype](#2026-04-29--multiplexedsource-trait-sketched-against-pg-prototype)
+   — concrete trait surface validated by mapping `pg_source_task_inner` onto methods.
+   Two acceptable smudges (`finalize_snapshot`, internally-spawned stream task).
+9. [`MultiplexedSource` validated against MySQL; refinements applied](#2026-04-29--multiplexedsource-validated-against-mysql-refinements-applied)
+   — three refinements: per-partition `SnapshotChunk.upper`, per-export `initial_upper`,
+   `StreamStartError = Transient | Definite`. PG revisions to match.
+10. [`DemuxedSource` validated against Kafka](#2026-04-29--demuxedsource-validated-against-kafka)
+    — five refinements: `discover` is also probe, shared-consumer pattern, global
+    `commit`, per-event-to-all-exports semantics, per-partition definite errors. Trait
+    symmetry with multiplexed achieved.
+11. [Bench harness for A/B perf comparison](#2026-05-09--bench-harness-for-ab-perf-comparison)
+    — proposes a single-process bench binary (~300 LOC) using in-memory persist + a
+    `NoopSink` to compare legacy vs prototype framework overhead without standing up
+    full Materialize. Caveats what it does/doesn't measure.
+
 ---
 
 ## 2026-04-29 — initial alternatives sketch
@@ -2204,3 +2245,550 @@ overkill but should fit. Defer those validations to implementation time.
 
 Recommend proceeding to implementation: refactor PG into the trait first, then MySQL,
 treating the trait as established by these two validations.
+
+---
+
+## 2026-04-29 — `DemuxedSource` validated against Kafka
+
+Read `kafka.rs` (1780 LOC, today's main). The demuxed trait was sketched only briefly in
+the split-decision entry; this is its first full validation. Surfaced one structural
+concern (shared consumer vs. per-partition tasks) and several smaller refinements.
+
+### Today's Kafka structure
+
+Two operators today:
+
+1. **`render_metadata_fetcher`** (single-worker, runs only on
+   `id.hashed() % worker_count`): owns a small rdkafka consumer used only for metadata.
+   On a `Ticker` it fetches partition list + per-partition high watermarks. Output:
+   - `(probe_ts, MetadataUpdate)` stream where `MetadataUpdate ∈ { Partitions(map),
+     TransientError(status), DefiniteError(SourceError) }`.
+   - `Probe<KafkaTimestamp>` stream computed from the partition list.
+   - Detects topic recreation by frontier regression.
+2. **`render_reader`** (multi-worker, partitions assigned via round-robin from
+   `id.hashed()`): owns a primary `BaseConsumer` per worker; uses rdkafka's
+   `partition_queue` to split the consumer's queue into one queue per assigned
+   partition. Walks all per-partition queues each poll, downgrading per-partition
+   capabilities. Concurrently runs `KafkaResumeUpperProcessor` to commit offsets back
+   to Kafka via a single batched `commit(tpl, CommitMode::Sync)` per resume_upper update.
+
+Multi-export fan-out is at the reader: each Kafka record is `repeat_clone`d across all
+exports' `output_index` slots, then partitioned downstream.
+
+Health is in two namespaces (`Kafka`, `Ssh`), driven both by metadata-side and
+reader-side observations.
+
+### Validation against the demuxed trait sketch
+
+Prior sketch:
+```rust
+trait DemuxedSource {
+    type Time: SourceTimestamp;
+    type Partition: ...;
+    async fn discover_partitions(&mut self) -> Result<DiscoveryResult, Transient>;
+    async fn stream_partition(&mut self, p: Self::Partition, from: Self::Time)
+        -> Result<PartitionStream, Transient>;
+    async fn commit_partition(&mut self, p: &Self::Partition, upper: Self::Time)
+        -> Result<(), Transient>;
+}
+```
+
+Validated against Kafka — refinements below.
+
+### Refinement 1: `discover` is also the probe
+
+Prior assumption: probe and discovery are separate concerns.
+
+Reality: in Kafka, one metadata fetch produces both the partition list **and** the
+upstream frontier. They cannot be separated cheaply — `metadata.topic.partitions` and
+`fetch_watermarks(topic, partition)` are two RPCs but always done together. Splitting
+into two trait methods would either force two metadata fetches per tick (wasteful) or
+introduce shared connector state to memoize between the two calls (ugly).
+
+**Refinement:** drop separate `probe()`. `discover()` returns both partitions and the
+upstream frontier in one call:
+
+```rust
+async fn discover(&mut self) -> Result<DiscoveryResult<Self>, DiscoverError>;
+
+pub struct DiscoveryResult<S: DemuxedSource + ?Sized> {
+    pub partitions: Vec<S::Partition>,
+    pub frontier: Antichain<S::Time>,    // upstream high-watermark frontier
+}
+
+pub enum DiscoverError {
+    Transient(Transient),
+    Definite(DataflowError),    // Topic recreation. Poisons the source.
+}
+```
+
+This is asymmetric to multiplexed (which has `probe` and `plan_snapshot` as separate
+methods). That asymmetry is correct: multiplexed sources have a single global cursor,
+demuxed sources have N partitioned cursors and the cursor list itself can change.
+
+### Refinement 2: Connector owns shared upstream connection; one task per worker, not per partition
+
+Prior assumption: framework spawns one task per `(worker, partition)` pair, each task
+calling `stream_partition`.
+
+Reality: rdkafka uses **one `BaseConsumer` per worker** with `partition_queue` splitting
+the consumer's incoming queue per partition. The consumer has a single network
+connection, single statistics callback, single notificator. Spinning up a task per
+partition would either:
+- Create N consumers per worker (wasteful: N×network connections, N×metadata fetches,
+  N×statistics), OR
+- Share one consumer across N tokio tasks (ugly: rdkafka isn't designed for this; would
+  need careful sync primitives).
+
+What the connector *wants* is: the framework calls `stream_partition` once per partition
+to get a `PartitionStream`, but **all of those streams are fed by a single internal
+worker task** the connector lazily spawns when the first `stream_partition` is called.
+That task owns the consumer, polls it, and routes records into per-partition channels.
+
+This is the same pattern as PG's bidirectional replication connection — the trait
+returns per-partition streams; how the connector wires them up internally is its
+business.
+
+**No trait change needed.** Document this as the expected pattern: "the connector may
+back multiple `PartitionStream`s with a single internal task and shared upstream
+resources."
+
+### Refinement 3: Commit is global, not per-partition
+
+Prior sketch: `commit_partition(p, upper)`. One call per partition per update.
+
+Reality: today's Kafka commits all partitions' offsets in **one** batched
+`Consumer::commit(tpl, CommitMode::Sync)` per resume_upper change. Calling
+`commit_partition` N times would either force N RPCs or require the connector to batch
+internally.
+
+**Refinement:** match multiplexed — single `commit(upper)`:
+
+```rust
+async fn commit(&mut self, upper: Antichain<Self::Time>) -> Result<(), Transient>;
+```
+
+`upper` is an antichain over `Partitioned<RangeBound<PartitionId>, MzOffset>`; the
+connector decomposes per partition and emits one batched commit RPC. Same shape as
+multiplexed `commit`. Symmetry across the two traits is a small bonus.
+
+### Refinement 4: Items go to all exports of *the same source*, not all exports period
+
+Prior sketch said "items go to all exports". Restated more precisely: items from a
+demuxed `PartitionStream` are fanned out to every export *of this source* (`source_exports`
+in `RawSourceCreationConfig`). Multiple sources running in the same worker do not mix.
+This is already implicit in how the framework receives streams (one connector instance
+per source) but worth stating in the trait doc.
+
+### Refinement 5: Per-partition definite errors are first-class
+
+Today's Kafka surfaces definite errors at two places:
+
+1. **Per-record decode error**: bad headers, bad metadata extraction. Becomes
+   `Err(DataflowError)` paired with the record's offset. Today this travels in the
+   data stream; trait has `PartitionEvent.payload = Err(DefiniteError)` — natural fit.
+2. **Per-source poisoning** (topic recreation): all exports must error. Travels via
+   `MetadataUpdate::DefiniteError`. Trait has `DiscoverError::Definite` — natural fit.
+
+There isn't a third "this partition is dead but other partitions live on" case for
+Kafka. (Compare: SQL Server with per-capture-instance failure could have this.)
+Trait doesn't need to model it for Kafka.
+
+### Refined `DemuxedSource` trait
+
+```rust
+pub trait DemuxedSource: Send + 'static {
+    type Time: SourceTimestamp;
+    type Partition: Serialize + DeserializeOwned + Clone + Eq + Hash + Send + Sync + 'static;
+    type PartitionStream: Stream<Item = PartitionEvent<Self::Time>> + Send + Unpin + 'static;
+
+    const STATUS_NAMESPACE: StatusNamespace;
+
+    fn new(config: ConnectorConfig<Self::Time>) -> Self;
+
+    /// Single-worker, periodic. Returns both the current partition list and the
+    /// upstream frontier in one fetch.
+    async fn discover(&mut self) -> Result<DiscoveryResult<Self>, DiscoverError>;
+
+    /// Per-worker. Called once per assigned partition. May share an internal task /
+    /// upstream connection with other partitions on this worker.
+    async fn stream_partition(
+        &mut self,
+        partition: Self::Partition,
+        from: Self::Time,
+    ) -> Result<Self::PartitionStream, Transient>;
+
+    /// Per-worker, periodic. `upper` covers all partitions assigned to this worker.
+    /// The connector decomposes and batches as appropriate.
+    async fn commit(&mut self, upper: Antichain<Self::Time>) -> Result<(), Transient>;
+}
+
+pub struct DiscoveryResult<S: DemuxedSource + ?Sized> {
+    pub partitions: Vec<S::Partition>,
+    pub frontier: Antichain<S::Time>,
+}
+
+pub enum DiscoverError {
+    Transient(Transient),
+    Definite(DataflowError),
+}
+
+pub struct PartitionEvent<T> {
+    /// Items go to ALL exports of this source.
+    pub time: T,
+    pub payload: Result<Row, DefiniteError>,
+}
+```
+
+### Kafka implementation skeleton
+
+```rust
+pub struct KafkaDemuxed {
+    cfg: ConnectorConfig<KafkaTimestamp>,
+    kafka_conn: KafkaSourceConnection,
+    /// Lazy: created on first `discover`. Single small consumer for metadata-only.
+    metadata_consumer: tokio::sync::OnceCell<Arc<BaseConsumer<...>>>,
+    /// Lazy: created on first `stream_partition`. The data-reading consumer + driver.
+    reader: tokio::sync::OnceCell<KafkaReaderTask>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Hash, Eq, PartialEq)]
+pub struct KafkaPartition {
+    pid: PartitionId,
+}
+
+impl DemuxedSource for KafkaDemuxed {
+    type Time = KafkaTimestamp;
+    type Partition = KafkaPartition;
+    type PartitionStream = KafkaPartitionStream;
+    const STATUS_NAMESPACE: StatusNamespace = StatusNamespace::Kafka;
+
+    fn new(cfg: ConnectorConfig<KafkaTimestamp>) -> Self { ... }
+
+    async fn discover(&mut self) -> Result<DiscoveryResult<Self>, DiscoverError> {
+        let consumer = self.ensure_metadata_consumer().await
+            .map_err(|e| DiscoverError::Transient(e.into_kafka_or_ssh()))?;
+        let info = fetch_partition_info(&*consumer, &self.kafka_conn.topic).await
+            .map_err(|e| DiscoverError::Transient(...))?;
+
+        // Build absolute frontier.
+        let max_pid = info.keys().last().copied();
+        let lower = max_pid.map(RangeBound::after).unwrap_or(RangeBound::NegInfinity);
+        let mut frontier = Antichain::from_elem(
+            Partitioned::new_range(lower, RangeBound::PosInfinity, MzOffset::from(0))
+        );
+        for (pid, hi) in &info {
+            frontier.insert(Partitioned::new_singleton(
+                RangeBound::exact(*pid), MzOffset::from(*hi),
+            ));
+        }
+
+        // Topic recreation detection: framework compares against prior frontier and
+        // raises DiscoverError::Definite if regression observed. (Connector could
+        // also detect; either side works. Prefer framework — it already has prior
+        // state for diffing.)
+
+        let partitions = info.keys().map(|p| KafkaPartition { pid: *p }).collect();
+        Ok(DiscoveryResult { partitions, frontier })
+    }
+
+    async fn stream_partition(
+        &mut self,
+        partition: KafkaPartition,
+        from: KafkaTimestamp,
+    ) -> Result<Self::PartitionStream, Transient> {
+        let reader = self.reader.get_or_try_init(|| async {
+            KafkaReaderTask::spawn(self.cfg.clone(), self.kafka_conn.clone()).await
+        }).await?;
+        // Returns the per-partition receiver from the shared task.
+        let from_offset = from.timestamp();
+        reader.add_partition(partition.pid, from_offset).await
+    }
+
+    async fn commit(&mut self, upper: Antichain<KafkaTimestamp>) -> Result<(), Transient> {
+        let Some(reader) = self.reader.get() else {
+            return Ok(());   // not yet streaming
+        };
+        // Decompose antichain into per-partition offsets, build TopicPartitionList,
+        // single Consumer::commit RPC.
+        reader.commit(upper).await
+    }
+}
+
+/// Internal: owns the rdkafka BaseConsumer, polling loop, per-partition queues, and
+/// per-partition channel senders. Spawned once on first `stream_partition` call.
+struct KafkaReaderTask { ... }
+```
+
+### Mapping each Kafka piece to the trait
+
+| Today's Kafka                                | Trait location                         |
+|----------------------------------------------|----------------------------------------|
+| `render` (top-level)                         | Eliminated — framework owns assembly   |
+| `render_metadata_fetcher`                    | `discover()` (called by framework)     |
+| `MetadataUpdate::Partitions`                 | `DiscoveryResult { partitions, frontier }` |
+| `MetadataUpdate::TransientError`             | `DiscoverError::Transient`             |
+| `MetadataUpdate::DefiniteError`              | `DiscoverError::Definite`              |
+| Topic-recreation detection                   | Framework (with prior frontier)        |
+| `render_reader` outer loop                   | `KafkaReaderTask` internal             |
+| Per-partition queue management               | `KafkaReaderTask` internal             |
+| `partition_capabilities` downgrade           | Framework's shim                       |
+| `outputs.iter().repeat_clone(record)`        | Framework's per-source fan-out         |
+| Output partitioning into export collections  | Framework                              |
+| `KafkaResumeUpperProcessor`                  | `commit()` (called by framework)       |
+| `responsible_for_pid` round-robin            | Framework distributes `partitions`     |
+| Per-partition health updates                 | Framework derives from `Transient`     |
+| Two-namespace health (Kafka, Ssh)            | `Transient.namespace`                  |
+| `start_offsets` (user-config)                | Threaded into `ConnectorConfig`        |
+
+### What disappears from Kafka connector code
+
+- `render` + `render_reader` + `render_metadata_fetcher` dataflow assembly (~400 LOC).
+- All `Capability` / `CapabilitySet` management (~200 LOC).
+- Per-export fan-out via `repeat_clone` and end-of-render partition.
+- Health-namespace routing logic (Kafka vs Ssh).
+- `MetadataUpdate` enum + `upstream_frontier()` method (replaced by direct frontier
+  return from `discover`).
+- `KafkaResumeUpperProcessor` struct (becomes ~30 lines inline in `commit`).
+
+What stays:
+
+- `KafkaReaderTask` (~today's `render_reader` body, minus capability code): rdkafka
+  consumer setup, partition_queue management, statistics callback, polling loop.
+- Metadata fetcher logic (becomes `discover` body).
+- `fetch_partition_info` and friends.
+- All envelope / decode / metadata-extraction logic.
+- `start_offsets` handling.
+
+Estimated Kafka LOC after refactor: ~900–1000 (today's main is 1780).
+
+### Where Kafka pushes back on the design (real risks)
+
+#### Risk 1: `KafkaReaderTask` polling cost per partition addition
+
+Today, `render_reader` knows the full partition assignment up-front from the metadata
+fetcher's first message and creates all partition queues at once. With the trait,
+`stream_partition` is called once per partition; partitions are added to the consumer
+incrementally.
+
+rdkafka's `assign(tpl)` is *replace*, not *add*. So adding a partition mid-stream means:
+1. Read current assignment.
+2. Append new partition.
+3. Call `consumer.assign(updated)`.
+
+This is doable but has a cost (rdkafka may rebalance internally) and a subtle
+correctness concern (in-flight messages from existing partitions are not lost — rdkafka
+handles this — but the timing is fiddly).
+
+**Mitigation:** the framework calls `stream_partition` for *all* partitions in one
+batch right after `discover`. The connector's `KafkaReaderTask` collects them and
+performs a single `assign` per discovery cycle. New partitions discovered later
+(uncommon for static topics) trigger a new round. The connector internally batches
+`add_partition` calls within a small window to avoid rebalance churn.
+
+This is a connector-internal detail; the trait API remains clean.
+
+#### Risk 2: Backpressure for demuxed
+
+For multiplexed, lag-based backpressure works because there's one global cursor
+(`data_upper`) and one committed_upper. For demuxed, each partition has its own cursor.
+"Lag" per partition is a scalar (offset delta), but pausing only the lagging partitions
+while letting others advance is awkward — rdkafka's per-partition queues *do* support
+this (`pause(tpl)` / `resume(tpl)` per partition), but the integration is non-trivial.
+
+**Recommendation:** for v1, use a single global pause/resume on the whole consumer when
+*any* partition exceeds the lag threshold. Per-partition pause is a follow-up
+optimization. Connectors get a `committed_upper_rx` like multiplexed; the
+`KafkaReaderTask` checks the antichain across all assigned partitions and pauses
+globally if any partition lags by more than `STORAGE_KAFKA_SOURCE_BACKPRESSURE_LAG_OFFSETS`.
+
+This is suboptimal (one slow consumer of one export pauses all partitions) but is a
+strict improvement over today (no backpressure at all in the prototype's KV path).
+
+### Trait surface comparison: multiplexed vs demuxed
+
+After this validation, the symmetry between the two traits is good:
+
+| Concept                | Multiplexed                      | Demuxed                              |
+|------------------------|----------------------------------|--------------------------------------|
+| Time domain            | Single global cursor             | N partitioned cursors                |
+| Probe / discovery      | `probe()` returns frontier       | `discover()` returns partitions+frontier |
+| Snapshot               | `plan_snapshot` + `snapshot_partition` + `finalize` | (none — replay from offset)        |
+| Stream                 | `stream(from)` — one stream      | `stream_partition(p, from)` — N streams |
+| Commit                 | `commit(upper)`                  | `commit(upper)`                      |
+| Construction           | `new(ConnectorConfig)`           | `new(ConnectorConfig)`               |
+| Errors                 | `Transient` + `StreamStartError` | `Transient` + `DiscoverError`        |
+| Restart unit           | Whole source                     | The worker (v1) / per-partition (future) |
+| Fan-out                | Per-event `export_id`            | All exports per event                |
+
+### Refinements that propagate back to multiplexed (optional)
+
+**`StreamStartError` and `DiscoverError`** are the same shape (`Transient | Definite`).
+Could unify as `SourceMethodError` and reuse across both traits and across the methods
+that need it. Cleaner, fewer types. Recommend doing so during implementation.
+
+### Three connectors validated
+
+PG, MySQL, Kafka all map cleanly. SQL Server (multiplexed, similar to PG/MySQL) and
+load generator (Simple = multiplexed, KV = demuxed) deferred to implementation time.
+
+The traits are **established**. The remaining work is implementation:
+
+1. Build the multiplexed framework + supervisor against PG (refactor prototype).
+2. Migrate MySQL.
+3. Build the demuxed framework + supervisor.
+4. Migrate Kafka.
+5. SQL Server, generators last.
+
+### Now-confirmed across multiplexed and demuxed
+
+- The shared infrastructure layer (reclock, persist_sink, decode, envelope, health
+  routing, definite-error fan-out, `committed_upper_rx`) is real and reusable.
+- The per-source supervisor differs between multiplexed and demuxed (~500 LOC each).
+- Direction (B) "collapse scopes" achieved — neither trait exposes Timely concepts.
+- Direction (D) "fault isolation" partial: multiplexed = whole source; demuxed = whole
+  worker (v1) with per-partition deferred. Acceptable for v1; the trait choice itself
+  encodes the granularity.
+
+### Verdict
+
+Three connectors validate the design. Recommend declaring design phase complete and
+moving to implementation. Future log entries should be implementation reports.
+
+---
+
+## 2026-05-09 — bench harness for A/B perf comparison
+
+The prototype's framework changes (channel-based reclock, tokio supervisor instead of
+Timely operators, frontier batching via `SourceBatch`) need to be compared against the
+legacy implementation for both throughput and latency. Today the only way to run either
+implementation is via a full Materialize stack: CRDB for catalog, environmentd, clusterd
+for storage, persist (S3 + CRDB), and a real upstream (PG / Kafka container). That's
+expensive to iterate against during prototype tuning.
+
+This entry proposes a small in-tree harness that isolates source rendering from the
+rest of Materialize. The goal is **framework overhead measurement**, not end-to-end
+production latency.
+
+### What's worth isolating
+
+The boundary that matters for A/B comparison: **upstream → connector → reclock → sink.**
+
+- **Persist for *data shards*** is identical in both implementations. Same write path,
+  same batch shape. Including it in the bench measures persist, not the framework.
+- **Persist for the *remap* shard** is small and is required for reclock to work in
+  both paths. An in-memory persist client is sufficient — `MemBlob` + `MemConsensus`
+  is already supported in tests via `PersistClientCache::new_no_metrics()`.
+- **Catalog and controller** are not in the data path of an ingest. They're startup
+  cost only.
+- **Multi-replica / multi-worker scaling** is a separate experiment. The harness can
+  stay single-worker.
+
+So the harness needs: a single timely worker, an in-memory persist for the remap
+shard, the ability to call either `create_raw_source` (legacy) or
+`create_raw_source_from_task` (prototype), and a sink that counts instead of writes.
+
+### Proposed harness
+
+**1. `mz-storage-source-bench` binary** in `src/storage/`. CLI flags:
+
+```
+--connector kafka|pg|loadgen-counter
+--mode legacy|task                       # which code path
+--upstream <connection-string>           # for kafka/pg; ignored for loadgen
+--duration 60s
+--workers 1                              # bench is single-worker for v1
+--output records,bytes,wall,p50,p99      # what to report
+--seed <u64>                             # for loadgen
+```
+
+Single process, single timely worker. Builds a tiny `RawSourceCreationConfig` against
+in-memory persist and drives the chosen code path until `--duration` elapses. Reports
+to stdout.
+
+**2. `NoopSink` operator** (~50 LOC). Consumes the per-export collection
+`VecCollection<mz_repr::Timestamp, Result<SourceOutput<FromTime>, DataflowError>, Diff>`,
+maintains atomic counters for records and bytes, and samples per-record latency by
+reading a wall-clock timestamp embedded in a known column (load gen) or extracted from
+metadata (`from_time` for Kafka offsets, `LSN` for PG). For real upstreams that don't
+embed a clock, latency measurement degrades to "time from `discover/probe` observation
+to sink observation," which is still useful.
+
+**3. `RawSourceCreationConfig::for_bench(...)` constructor** (~50 LOC). Today's
+construction is tangled with `StorageState` and `internal_control`. Add a constructor
+that takes only what the bench needs and uses defaults / dummies for the rest (no
+`error_handler`, no `read_only_rx`, no internal command bus, no real metrics
+registry — use `MetricsRegistry::new()` / `PersistClientCache::new_no_metrics()`).
+
+Total cost: ~300 LOC, no public API changes outside the new constructor.
+
+### What you can measure with it
+
+- **Framework overhead** at saturation, using `LoadGenerator::Counter`. Cheapest
+  signal: is the channel-based reclock within noise of `PusherCapture`? If yes, no
+  further perf work needed. If no, profile.
+- **Connector overhead** with a real upstream. Containerized PG with
+  `pgbench -i -s 50` populating a table; containerized Kafka with
+  `kafka-producer-perf-test` driving load. A/B the same upstream against both code
+  paths.
+- **Per-record latency distributions** (p50/p99) under steady state.
+- **Backpressure behavior**: feed `committed_upper` updates at a controlled rate via
+  the watch channel and observe how each path throttles.
+
+### What you cannot measure with it
+
+Be explicit about these so nobody draws wrong conclusions from harness numbers:
+
+- **End-to-end user-visible latency** including persist commit. The persist sink is
+  the dominant contributor to source-to-query freshness; the harness reports
+  *framework* contribution to latency, not the total. A separate experiment in a real
+  Materialize stack is needed for that.
+- **Multi-worker scaling.** Harness is single-worker. The legacy path's per-worker
+  partition queue model and the prototype's worker-0-only-active model behave very
+  differently at scale; that's a separate bench.
+- **Catalog and controller startup**. Not in the data path; out of scope.
+- **Real production load patterns** — skewed partitions, schema changes, slow
+  consumers, network jitter. Add focused micro-bench scenarios for each as needed.
+- **Memory under sustained backpressure**. The harness can simulate it with a
+  controlled `committed_upper` feed but won't surface persist's own backpressure
+  behavior.
+
+### Recommended first runs
+
+1. **Framework-only baseline.** `--connector loadgen-counter --mode legacy` vs `--mode
+   task`. If within noise, the framework refactor has no perf cost; iteration on the
+   prototype can prioritize correctness over micro-optimizations.
+2. **PG with a populated table.** Saturate the upstream by writing transactions at
+   the maximum rate the test PG can sustain; measure ingest throughput and
+   per-transaction latency. Both modes; report ratio.
+3. **Kafka with high-cardinality partition fan-out.** 64+ partitions, messages
+   distributed evenly. Measures per-partition queue costs in legacy vs the
+   prototype's eventual demuxed model. (Today the prototype only covers PG; this
+   becomes the first real test of the demuxed path once Kafka is migrated.)
+
+### Why this is worth doing now
+
+The prototype's framework involves load-bearing perf claims that the design entries
+have not validated:
+- Channel-based reclock is within noise of `PusherCapture`-based reclock.
+- `SourceBatch` frontier batching doesn't add perceptible latency.
+- The bounded data channel (when added) doesn't starve under healthy load.
+
+Without a harness, these claims either remain assumptions or get tested through full
+Materialize CI runs that take minutes per iteration. With the harness, a perf
+regression caught during prototype tuning is a 10-second cargo run, not a 10-minute
+mzcompose cycle.
+
+### Open questions for the next implementer
+
+- **Where does latency get sampled?** Embedding a wall clock in load-gen records is
+  obvious; for real upstream connectors the cleanest source-side ts is the connector's
+  observation timestamp (when the event arrives in the connector task). Sink-side ts is
+  the moment the `NoopSink` reads the record. Difference = framework latency.
+- **How to get a `TimelyConfig`/`Worker` shape outside `clusterd`?** `mz-cluster`
+  exposes `serve` but it's heavyweight. A lighter "spawn one timely worker"
+  primitive in `mz-timely-util` would help (and would also benefit other ad-hoc
+  benches).
+- **Should the harness also run as a `criterion` benchmark?** Maybe, for the
+  loadgen-only mode. Real-upstream modes are too long-running for criterion's noise
+  model.
