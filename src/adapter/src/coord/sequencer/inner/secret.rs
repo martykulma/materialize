@@ -286,6 +286,12 @@ impl Coordinator {
         Ok(StageResult::HandleRetire(mz_ore::task::spawn(
             || "alter secret ensure",
             async move {
+                // Test-only: widens the window between the dependent-content
+                // guard run above and this durable write, so a test can land a
+                // concurrent CREATE/ALTER CONNECTION that comes to depend on the
+                // still-old secret contents. No-op unless a failpoint action is
+                // configured.
+                fail::fail_point!("alter_secret_pause_before_ensure");
                 secrets_controller.ensure(id, &payload).await?;
                 caching_secrets_reader.invalidate(id);
                 Ok(ExecuteResponse::AlteredObject(ObjectType::Secret))
